@@ -27,6 +27,37 @@ const NO_TEACHER_RULE = `- NEVER use the word "teacher" (or "instructor", "I", "
 // Failing comments must not talk about earning/getting the credit.
 const NO_CREDIT_RULE = `- NEVER mention the credit at all ("earn the credit", "get the credit", "obtain a credit", "credit"). Refer instead to "meeting the course expectations", "demonstrating the learning expectations" or "providing sufficient evidence of learning".`;
 
+// ── Gemini model selection ────────────────────────────────────────────
+const GEMINI_DEFAULT_MODELS = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+// Models that can't write comments (speech, images, embeddings, live/robotics…).
+const GEMINI_NOT_FOR_TEXT = /embed|image|imagen|veo|tts|audio|live|native|aqa|robotics|computer-use|learnlm|gemma|nano/i;
+// Choose a current text model from Google's model list: stable before
+// preview/experimental, Flash before Flash-Lite before Pro (Pro has tight
+// free-tier limits), then the newest version.
+const pickGeminiModel = (models, tried) => {
+  const usable = models
+    .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map(m => (m.name || "").replace(/^models\//, ""))
+    .filter(id => id.startsWith("gemini") && !GEMINI_NOT_FOR_TEXT.test(id) && !tried.has(id));
+  const score = id => {
+    const version = Number((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]);
+    const unstable = /preview|exp|latest/.test(id) ? 1 : 0;
+    const tier = /flash-lite/.test(id) ? 1 : /flash/.test(id) ? 0 : /pro/.test(id) ? 2 : 3;
+    return [unstable, tier, -version];
+  };
+  usable.sort((a, b) => {
+    const [x, y] = [score(a), score(b)];
+    return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  });
+  return usable[0] || null;
+};
+const getGeminiModel = () => {
+  try { return localStorage.getItem("rc_gemini_model"); } catch { return null; }
+};
+const saveGeminiModel = (model) => {
+  try { localStorage.setItem("rc_gemini_model", model); } catch { /* storage unavailable */ }
+};
+
 // ── Groq model selection ──────────────────────────────────────────────
 // Groq retires models periodically. We start with GROQ_DEFAULT_MODEL; if Groq
 // reports it as retired, we fetch the key's model list and pick a replacement.
@@ -279,6 +310,8 @@ export default function App() {
   const [generated, setGenerated] = useState("");
   const [edited, setEdited] = useState("");
   const [generatedBy, setGeneratedBy] = useState("");
+  // Why Gemini failed, when Groq ended up writing the comment instead.
+  const [fallbackNote, setFallbackNote] = useState("");
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState([]);
   const [storageLoaded, setStorageLoaded] = useState(false);
@@ -919,7 +952,8 @@ Output only the Excel formula, nothing else.`;
     setGenerated("");
     setEdited("");
 
-    const MODELS = geminiOn ? ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"] : [];
+    // Last model that worked first, then the built-in list (no duplicates).
+    const MODELS = geminiOn ? [...new Set([getGeminiModel(), ...GEMINI_DEFAULT_MODELS].filter(Boolean))] : [];
     // Errors where a different model might still work (busy, or this model
     // isn't available to this key) -> move on to the next model.
     const isRetryable = (msg) => /high demand|overloaded|503|capacity|rate limit|quota|exhausted|not found|not supported|404/i.test(msg ?? '');
@@ -928,6 +962,7 @@ Output only the Excel formula, nothing else.`;
     const explain = (service, msg) => {
       if (isKeyProblem(msg)) return `${service} rejected your API key — check it was copied in full (${msg})`;
       if (isNetworkProblem(msg)) return `Couldn't reach ${service}. Your network (e.g. a school network) may be blocking it — try another connection.`;
+      if (/quota|exhausted|rate limit|429|too many requests/i.test(msg ?? '')) return `${service}'s free usage limit has been reached — wait a minute and try again; if it keeps happening, the daily limit is used up until tomorrow (${msg})`;
       return `${service}: ${msg}`;
     };
     const finish = (raw, by) => {
@@ -942,20 +977,20 @@ Output only the Excel formula, nothing else.`;
       setError("");
       setLoading(false);
     };
+    setFallbackNote("");
     const body = JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: form.failing ? buildFailPrompt() : buildPassPrompt() }] }],
-      generationConfig: { maxOutputTokens: 2048, temperature: 0.5 },
+      // Newer Gemini models "think" before answering, and that thinking counts
+      // toward this limit - 2048 was being used up before the comment was written.
+      generationConfig: { maxOutputTokens: 8192, temperature: 0.5 },
     });
 
     let geminiError = "";
-    geminiLoop:
-    for (let m = 0; m < MODELS.length; m++) {
-      const model = MODELS[m];
-      if (m > 0) {
-        setError(`Trying ${model}…`);
-        await new Promise(r => setTimeout(r, 1500));
-      }
+    let geminiStop = false;   // key / network problem: no other Gemini model will help
+    const tried = new Set();
+    const tryGeminiModel = async (model) => {
+      tried.add(model);
       try {
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -964,24 +999,56 @@ Output only the Excel formula, nothing else.`;
         const data = await res.json().catch(() => ({}));
         if (data.error || !res.ok) {
           geminiError = data.error?.message || `HTTP ${res.status}`;
-          if (isRetryable(geminiError)) continue;  // try the next model
-          break geminiLoop;                         // bad key etc. - other models won't help
+          if (!isRetryable(geminiError) && !isRetiredModel(geminiError)) geminiStop = true;
+          return null;
         }
         const candidate = data.candidates?.[0];
-        if (candidate?.finishReason === 'MAX_TOKENS') { geminiError = "Output cut off"; continue; }
-        const raw = candidate?.content?.parts?.[0]?.text ?? '';
-        if (!raw) { geminiError = `No text returned (${candidate?.finishReason || "empty response"})`; continue; }
-        finish(raw, model);
-        return;
+        if (candidate?.finishReason === 'MAX_TOKENS') { geminiError = "Output cut off (ran out of tokens)"; return null; }
+        // Skip any "thought" parts; join the answer parts.
+        const raw = (candidate?.content?.parts || []).filter(pt => !pt.thought).map(pt => pt.text || '').join('').trim();
+        if (!raw) {
+          const blocked = data.promptFeedback?.blockReason;
+          geminiError = blocked ? `Request blocked by Google's safety filter (${blocked})` : `No text returned (${candidate?.finishReason || "empty response"})`;
+          return null;
+        }
+        return raw;
       } catch (e) {
         geminiError = e.message;
-        break geminiLoop; // network failure - every Gemini model would fail the same way
+        geminiStop = true; // network failure - every Gemini model would fail the same way
+        return null;
+      }
+    };
+    for (let m = 0; m < MODELS.length && !geminiStop; m++) {
+      if (m > 0) {
+        setError(`Trying ${MODELS[m]}…`);
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      const raw = await tryGeminiModel(MODELS[m]);
+      if (raw) { saveGeminiModel(MODELS[m]); finish(raw, MODELS[m]); return; }
+    }
+    // Google retires Gemini models over time. If ours are gone, ask Google which
+    // models this key can use, try the best one, and remember it.
+    if (geminiOn && !geminiStop && isRetiredModel(geminiError)) {
+      setError("Gemini's models have changed — finding a current one…");
+      try {
+        const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": apiKey } });
+        const list = await res.json().catch(() => ({}));
+        const replacement = pickGeminiModel(list.models || [], tried);
+        if (replacement) {
+          const raw = await tryGeminiModel(replacement);
+          if (raw) { saveGeminiModel(replacement); finish(raw, replacement); return; }
+        } else {
+          geminiError += " (and no current replacement model was found)";
+        }
+      } catch (e) {
+        geminiError += ` (couldn't look up current models: ${e.message})`;
       }
     }
     // Fallback (or primary, when Gemini is off / has no key): Groq
     let groqError = "";
+    const geminiWhy = geminiOn && geminiError ? explain("Gemini", geminiError) : "";
     if (groqKey) {
-      if (geminiOn) setError("Gemini unavailable — trying Groq…");
+      if (geminiOn) setError(`Gemini unavailable — trying Groq…  (${geminiWhy})`);
       const groqHeaders = { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` };
       const callGroq = async (model) => {
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -1023,6 +1090,7 @@ Output only the Excel formula, nothing else.`;
         }
         if (result.raw) {
           finish(result.raw, `${model} (Groq)`);
+          if (geminiWhy) setFallbackNote(geminiWhy);
           return;
         }
         groqError = result.error;
@@ -1342,6 +1410,7 @@ Output only the Excel formula, nothing else.`;
                   </div>
                 )}
                 {generatedBy && <div style={{ fontSize: 11, color: "#aaa", marginTop: 4 }}>Generated by {generatedBy}</div>}
+                {fallbackNote && <div style={{ fontSize: 11, color: "#9a6700", marginTop: 2, textAlign: "left" }}>Gemini didn't work, so Groq wrote this. Reason: {fallbackNote}</div>}
                 <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                   <button onClick={() => copyToClipboard(excelMode ? edited : formulaToText(edited), 'generated')} style={{
                     flex: 1, padding: "9px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13, transition: "all 0.2s",
