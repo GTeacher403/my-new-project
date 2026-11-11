@@ -266,7 +266,7 @@ const STREAMS = [
 ];
 
 const emptyForm = {
-  name: "", pronounIdx: 0, level: "a strong", subject: "Science", grade: "9", stream: "", highest: "",
+  name: "", pronounIdx: 0, level: "a strong", subject: "Mathematics", grade: "10", stream: "Academic", highest: "",
   strengths: "", improvements: "", notes: "", failing: false, thriving: false,
   failReasons: "", failSupport: "",
 };
