@@ -1,4 +1,14 @@
 import { useState, useEffect } from "react";
+import Anthropic from "@anthropic-ai/sdk";
+
+const CLAUDE_MODEL = "claude-opus-5-5";
+const CLAUDE_LABEL = "Claude Opus 5.5";
+const PROVIDERS = [
+  { value: "gemini", label: "Gemini" },
+  { value: "claude", label: "Claude" },
+  { value: "groq", label: "Groq" },
+];
+const PROVIDER_NAME = { gemini: "Gemini", claude: "Claude", groq: "Groq" };
 
 const LEVELS = [
   { label: "Excellent", value: "an excellent" },
@@ -230,7 +240,20 @@ export default function App() {
   const [error, setError] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
-  const [useGemini, setUseGemini] = useState(true);
+  const [claudeKey, setClaudeKey] = useState(() => {
+    try { return (localStorage.getItem("rc_claude_key") || "").trim(); } catch { return ""; }
+  });
+  // Which AI to try first. Others with a key are used as fallbacks.
+  const [provider, setProviderState] = useState(() => {
+    try {
+      const p = localStorage.getItem("rc_provider");
+      return PROVIDER_NAME[p] ? p : "gemini";
+    } catch { return "gemini"; }
+  });
+  const setProvider = (p) => {
+    setProviderState(p);
+    try { localStorage.setItem("rc_provider", p); } catch { /* storage unavailable */ }
+  };
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [excelMode, setExcelMode] = useState(true);
   // "midterm" → next steps for the rest of THIS course; "final" → next steps for future courses
@@ -274,6 +297,11 @@ export default function App() {
     const k = cleanKey(key);
     setGroqKey(k);
     localStorage.setItem("rc_groq_key", k);
+  };
+  const saveClaudeKey = (key) => {
+    const k = cleanKey(key);
+    setClaudeKey(k);
+    localStorage.setItem("rc_claude_key", k);
   };
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -719,11 +747,11 @@ Output only the Excel formula, nothing else.`;
   };
 
   const generate = async () => {
-    const geminiOn = useGemini && !!apiKey;
-    if (!geminiOn && !groqKey) {
-      setError(useGemini
-        ? "Please enter your Gemini API key first (or a Groq key)."
-        : "Gemini is turned off — please enter a Groq API key.");
+    const keys = { gemini: apiKey, claude: claudeKey, groq: groqKey };
+    // Chosen provider first, then any other provider that has a key, as fallbacks.
+    const order = [provider, ...PROVIDERS.map(p => p.value).filter(p => p !== provider)].filter(p => keys[p]);
+    if (!keys[provider]) {
+      setError(`Please enter your ${PROVIDER_NAME[provider]} API key first (or pick a different Main AI).`);
       setShowKeyInput(true);
       return;
     }
@@ -737,7 +765,7 @@ Output only the Excel formula, nothing else.`;
     setGenerated("");
     setEdited("");
 
-    const MODELS = geminiOn ? ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"] : [];
+    const MODELS = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
     // Errors where a different model might still work (busy, or this model
     // isn't available to this key) -> move on to the next model.
     const isRetryable = (msg) => /high demand|overloaded|503|capacity|rate limit|quota|exhausted|not found|not supported|404/i.test(msg ?? '');
@@ -763,40 +791,73 @@ Output only the Excel formula, nothing else.`;
       generationConfig: { maxOutputTokens: 2048, temperature: 0.5 },
     });
 
-    let geminiError = "";
-    geminiLoop:
-    for (let m = 0; m < MODELS.length; m++) {
-      const model = MODELS[m];
-      if (m > 0) {
-        setError(`Trying ${model}…`);
-        await new Promise(r => setTimeout(r, 1500));
-      }
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, body }
-        );
-        const data = await res.json().catch(() => ({}));
-        if (data.error || !res.ok) {
-          geminiError = data.error?.message || `HTTP ${res.status}`;
-          if (isRetryable(geminiError)) continue;  // try the next model
-          break geminiLoop;                         // bad key etc. - other models won't help
+    // Each provider returns { raw, by } on success or { error } with a plain-language message.
+    const tryGemini = async () => {
+      let geminiError = "";
+      for (let m = 0; m < MODELS.length; m++) {
+        const model = MODELS[m];
+        if (m > 0) {
+          setError(`Trying ${model}…`);
+          await new Promise(r => setTimeout(r, 1500));
         }
-        const candidate = data.candidates?.[0];
-        if (candidate?.finishReason === 'MAX_TOKENS') { geminiError = "Output cut off"; continue; }
-        const raw = candidate?.content?.parts?.[0]?.text ?? '';
-        if (!raw) { geminiError = `No text returned (${candidate?.finishReason || "empty response"})`; continue; }
-        finish(raw, model);
-        return;
-      } catch (e) {
-        geminiError = e.message;
-        break geminiLoop; // network failure - every Gemini model would fail the same way
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, body }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (data.error || !res.ok) {
+            geminiError = data.error?.message || `HTTP ${res.status}`;
+            if (isRetryable(geminiError)) continue;  // try the next model
+            break;                                    // bad key etc. - other models won't help
+          }
+          const candidate = data.candidates?.[0];
+          if (candidate?.finishReason === 'MAX_TOKENS') { geminiError = "Output cut off"; continue; }
+          const raw = candidate?.content?.parts?.[0]?.text ?? '';
+          if (!raw) { geminiError = `No text returned (${candidate?.finishReason || "empty response"})`; continue; }
+          return { raw, by: model };
+        } catch (e) {
+          geminiError = e.message;
+          break; // network failure - every Gemini model would fail the same way
+        }
       }
-    }
-    // Fallback (or primary, when Gemini is off / has no key): Groq
-    let groqError = "";
-    if (groqKey) {
-      if (geminiOn) setError("Gemini unavailable — trying Groq…");
+      return { error: explain("Gemini", geminiError) };
+    };
+
+    const tryClaude = async () => {
+      // Runs in the browser / Electron window, so the key is the user's own and
+      // never leaves this machine except to api.anthropic.com.
+      const client = new Anthropic({ apiKey: claudeKey, dangerouslyAllowBrowser: true, maxRetries: 1 });
+      try {
+        const msg = await client.beta.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 16000,
+          // If Claude's safety filter declines (rare for report cards), the API
+          // retries on another Claude model inside the same request.
+          betas: ["server-side-fallback-2026-07-01"],
+          fallbacks: "default",
+          system: systemPrompt,
+          messages: [{ role: "user", content: form.failing ? buildFailPrompt() : buildPassPrompt() }],
+        });
+        if (msg.stop_reason === "refusal") return { error: "Claude declined to write this comment — try rewording the notes." };
+        if (msg.stop_reason === "max_tokens") return { error: "Claude: output cut off" };
+        const raw = msg.content.filter(b => b.type === "text").map(b => b.text).join("").trim();
+        if (!raw) return { error: "Claude: no text returned" };
+        return { raw, by: CLAUDE_LABEL };
+      } catch (e) {
+        if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError)
+          return { error: `Claude rejected your API key — check it was copied in full (${e.message})` };
+        if (e instanceof Anthropic.APIConnectionError)
+          return { error: "Couldn't reach Claude. Your network (e.g. a school network) may be blocking it — try another connection." };
+        if (e instanceof Anthropic.RateLimitError)
+          return { error: "Claude: rate limit or out of credits — check your plan at console.anthropic.com." };
+        if (e instanceof Anthropic.APIError) return { error: `Claude: ${e.message}` };
+        return { error: `Claude: ${e?.message || e}` };
+      }
+    };
+
+    const tryGroq = async () => {
+      let groqError;
       try {
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
@@ -813,19 +874,23 @@ Output only the Excel formula, nothing else.`;
         });
         const data = await res.json().catch(() => ({}));
         const raw = data.choices?.[0]?.message?.content ?? '';
-        if (res.ok && !data.error && raw) {
-          finish(raw, "llama-3.3-70b (Groq)");
-          return;
-        }
+        if (res.ok && !data.error && raw) return { raw, by: "llama-3.3-70b (Groq)" };
         groqError = data.error?.message || `HTTP ${res.status}`;
       } catch (e) {
         groqError = e.message;
       }
+      return { error: explain("Groq", groqError) };
+    };
+
+    const runners = { gemini: tryGemini, claude: tryClaude, groq: tryGroq };
+    const errors = [];
+    for (let i = 0; i < order.length; i++) {
+      if (i > 0) setError(`${PROVIDER_NAME[order[i - 1]]} unavailable — trying ${PROVIDER_NAME[order[i]]}…`);
+      const result = await runners[order[i]]();
+      if (result.raw) { finish(result.raw, result.by); return; }
+      errors.push(result.error);
     }
-    const parts = [];
-    if (geminiError) parts.push(explain("Gemini", geminiError));
-    if (groqError) parts.push(explain("Groq", groqError));
-    setError(parts.length ? parts.join("  •  ") : "All models unavailable. Try again shortly.");
+    setError(errors.length ? errors.join("  •  ") : "All models unavailable. Try again shortly.");
     setLoading(false);
   };
 
@@ -879,7 +944,7 @@ Output only the Excel formula, nothing else.`;
               background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
               borderRadius: 8, color: "white", fontSize: 12, fontWeight: 600, padding: "6px 12px", cursor: "pointer"
             }}>
-              {apiKey ? "🔑 Key set" : "🔑 Set API key"}
+              {(apiKey || claudeKey || groqKey) ? `🔑 ${PROVIDER_NAME[provider]}` : "🔑 Set API key"}
             </button>
           </div>
           <div style={{ marginTop: 10, background: "rgba(255,255,255,0.12)", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
@@ -890,41 +955,50 @@ Output only the Excel formula, nothing else.`;
         {/* API Key input */}
         {showKeyInput && (
           <div style={{ background: "#fff", borderRadius: 12, padding: 16, marginBottom: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.08)", border: "1px solid #e0e0e0" }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Gemini API Key
-            </label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="password"
-                placeholder="AIza..."
-                value={apiKey}
-                onChange={e => saveApiKey(e.target.value)}
-                style={{ flex: 1, border: "1px solid #d0d0d0", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "monospace" }}
-              />
-              <button onClick={() => setShowKeyInput(false)} style={{
-                padding: "8px 14px", borderRadius: 8, border: "none", background: "#2d6a9f", color: "white", fontWeight: 600, fontSize: 13, cursor: "pointer"
-              }}>Save</button>
-            </div>
-            <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>Free at aistudio.google.com — stored in localStorage only.</div>
-            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-              <div onClick={() => setUseGemini(v => !v)} style={{ width: 40, height: 22, borderRadius: 11, background: useGemini ? "#2d6a9f" : "#ccc", cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
-                <div style={{ position: "absolute", top: 3, left: useGemini ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
-              </div>
-              <span style={{ fontSize: 12, color: "#555" }}>Use Gemini {!useGemini && <span style={{ color: "#c0392b", fontWeight: 600 }}>(disabled — Groq only)</span>}</span>
-            </div>
-            <div style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 14 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Groq API Key <span style={{ fontWeight: 400, textTransform: "none", color: "#999" }}>(optional — last resort fallback)</span>
-              </label>
-              <input
-                type="password"
-                placeholder="gsk_..."
-                value={groqKey}
-                onChange={e => saveGroqKey(e.target.value)}
-                style={{ width: "100%", border: "1px solid #d0d0d0", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "monospace", boxSizing: "border-box" }}
-              />
-              <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>Free at console.groq.com — only used if all Gemini models are unavailable.</div>
-            </div>
+            {(() => {
+              const keyLbl = { display: "block", fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" };
+              const keyInp = { width: "100%", border: "1px solid #d0d0d0", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "monospace", boxSizing: "border-box" };
+              const hint = { fontSize: 11, color: "#999", marginTop: 6 };
+              const fields = [
+                { value: "gemini", name: "Gemini", placeholder: "AIza...", key: apiKey, save: saveApiKey, note: "Free at aistudio.google.com" },
+                { value: "claude", name: "Claude", placeholder: "sk-ant-...", key: claudeKey, save: saveClaudeKey, note: `Paid (pay per use) at console.anthropic.com — uses ${CLAUDE_LABEL}` },
+                { value: "groq", name: "Groq", placeholder: "gsk_...", key: groqKey, save: saveGroqKey, note: "Free at console.groq.com" },
+              ];
+              return (<>
+                <label style={keyLbl}>Main AI</label>
+                <div role="radiogroup" aria-label="Main AI" style={{ display: "inline-flex", background: "#eef2f6", borderRadius: 10, padding: 3, gap: 3 }}>
+                  {PROVIDERS.map(o => {
+                    const on = provider === o.value;
+                    return (
+                      <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => setProvider(o.value)} style={{
+                        padding: "6px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13,
+                        background: on ? "#2d6a9f" : "transparent", color: on ? "#fff" : "#555",
+                        boxShadow: on ? "0 1px 3px rgba(0,0,0,0.15)" : "none",
+                      }}>{o.label}</button>
+                    );
+                  })}
+                </div>
+                <div style={hint}>Tried first. Any other AI with a key below is used as a backup. Keys are stored on this computer only.</div>
+                {fields.map(f => (
+                  <div key={f.value} style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 14 }}>
+                    <label style={keyLbl}>
+                      {f.name} API Key{" "}
+                      <span style={{ fontWeight: 400, textTransform: "none", color: "#999" }}>
+                        {provider === f.value ? "(main)" : "(optional backup)"}
+                      </span>
+                    </label>
+                    <input type="password" placeholder={f.placeholder} value={f.key}
+                      onChange={e => f.save(e.target.value)} style={keyInp} aria-label={`${f.name} API key`} />
+                    <div style={hint}>{f.note}</div>
+                  </div>
+                ))}
+                <div style={{ marginTop: 14, textAlign: "right" }}>
+                  <button onClick={() => setShowKeyInput(false)} style={{
+                    padding: "8px 14px", borderRadius: 8, border: "none", background: "#2d6a9f", color: "white", fontWeight: 600, fontSize: 13, cursor: "pointer"
+                  }}>Save</button>
+                </div>
+              </>);
+            })()}
           </div>
         )}
 
