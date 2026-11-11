@@ -9,6 +9,36 @@ const LEVELS = [
   { label: "Limited", value: "limited" },
 ];
 
+// ── Groq model selection ──────────────────────────────────────────────
+// Groq retires models periodically. We start with GROQ_DEFAULT_MODEL; if Groq
+// reports it as retired, we fetch the key's model list and pick a replacement.
+const GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile";
+// Preferred general-purpose writing models, best first (matched by prefix so
+// newer versions of the same family still match).
+const GROQ_PREFERRED = [
+  "llama-3.3-70b", "openai/gpt-oss-120b", "moonshotai/kimi-k2", "meta-llama/llama-4-maverick",
+  "meta-llama/llama-4-scout", "qwen/qwen3", "openai/gpt-oss-20b", "llama-3.1-8b",
+];
+// Speech, safety-filter and tool-only models can't write comments.
+const GROQ_NOT_FOR_TEXT = /whisper|guard|tts|playai|orpheus|compound|embed|vision|allam/i;
+const isRetiredModel = (msg) => /decommission|deprecat|no longer (supported|available)|does not exist|model_not_found|not found|invalid model/i.test(msg ?? "");
+const pickGroqModel = (ids, exclude) => {
+  const usable = ids.filter(id => id !== exclude && !GROQ_NOT_FOR_TEXT.test(id));
+  for (const pref of GROQ_PREFERRED) {
+    const hit = usable.find(id => id === pref || id.startsWith(pref));
+    if (hit) return hit;
+  }
+  // Nothing familiar: take the largest model by its parameter count ("70b", "120b"…).
+  const size = id => Number((id.match(/(\d+)b\b/i) || [0, 0])[1]);
+  return usable.sort((a, b) => size(b) - size(a))[0] || null;
+};
+const getGroqModel = () => {
+  try { return localStorage.getItem("rc_groq_model") || GROQ_DEFAULT_MODEL; } catch { return GROQ_DEFAULT_MODEL; }
+};
+const saveGroqModel = (model) => {
+  try { localStorage.setItem("rc_groq_model", model); } catch { /* storage unavailable */ }
+};
+
 // Strength-focused midterm opening lines from school guidance (names replaced with codes).
 const STRENGTH_OPENERS = [
   `[@Name] consistently demonstrates a willingness to learn and a positive approach to classroom activities.`,
@@ -869,13 +899,14 @@ Output only the Excel formula, nothing else.`;
     let groqError = "";
     if (groqKey) {
       if (geminiOn) setError("Gemini unavailable — trying Groq…");
-      try {
+      const groqHeaders = { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` };
+      const callGroq = async (model) => {
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
+          headers: groqHeaders,
           body: JSON.stringify({
-            model: "llama-3.3-70b-versatile",
-            max_tokens: 2048,
+            model,
+            max_tokens: 4096,
             temperature: 0.4,
             messages: [
               { role: "system", content: systemPrompt },
@@ -884,12 +915,34 @@ Output only the Excel formula, nothing else.`;
           }),
         });
         const data = await res.json().catch(() => ({}));
-        const raw = data.choices?.[0]?.message?.content ?? '';
-        if (res.ok && !data.error && raw) {
-          finish(raw, "llama-3.3-70b (Groq)");
+        // Some newer models put their reasoning in <think> tags - never let it into a comment.
+        const raw = (data.choices?.[0]?.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        if (res.ok && !data.error && raw) return { raw };
+        return { error: data.error?.message || `HTTP ${res.status}` };
+      };
+      try {
+        let model = getGroqModel();
+        let result = await callGroq(model);
+        // Groq retires models from time to time. When it says the model is gone,
+        // ask Groq which models this key can use, pick the best one, and remember it.
+        if (result.error && isRetiredModel(result.error)) {
+          setError("Groq retired its old model — finding a current one…");
+          const res = await fetch("https://api.groq.com/openai/v1/models", { headers: groqHeaders });
+          const list = await res.json().catch(() => ({}));
+          const replacement = pickGroqModel((list.data || []).filter(m => m.active !== false).map(m => m.id), model);
+          if (replacement) {
+            model = replacement;
+            result = await callGroq(model);
+            if (result.raw) saveGroqModel(model);
+          } else {
+            result = { error: `${result.error} (and no replacement model was found)` };
+          }
+        }
+        if (result.raw) {
+          finish(result.raw, `${model} (Groq)`);
           return;
         }
-        groqError = data.error?.message || `HTTP ${res.status}`;
+        groqError = result.error;
       } catch (e) {
         groqError = e.message;
       }
