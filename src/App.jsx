@@ -263,6 +263,16 @@ MIDTERM STRUCTURE (school requirement) — the comment MUST follow this order:
 WRONG opening (not strength-focused): "[@Name] is demonstrating a limited understanding of this course."
 Strength-focused opening examples (match the style; base the content on THIS student's strengths):
 ${STRENGTH_OPENERS.map(s => `  - ${s}`).join('\n')}
+
+WRITING QUALITY — the comment is read by parents, so it must sound natural and plain:
+  - One clear idea per sentence. No stacked qualifiers like "particularly evident in", "especially in", "which is reflected in".
+  - Area for growth: write "An area for growth is [-ing phrase]." (e.g. "An area for growth is participating more actively in class discussions."). NEVER "is for [@Object] to…".
+  - Completed assessments stay in the present tense by describing what the work SHOWS: "[@Possessive2] work on the Dynamics Unit Test shows that [@Subject] can apply complex principles accurately." NEVER "On the [test], [@Subject] applies…".
+  - Never mention the same unit or topic twice. If the Best assessment already names a unit (e.g. "Dynamics Unit Test"), do NOT also add the curriculum topic for that unit.
+  - No vague padding: "to deepen collective understanding", "to reach [@Possessive] full potential", "to achieve academic success".${usesLevel ? `
+  - Never put "strong", "excellent", "good" or "solid" anywhere near [@Level] — the placeholder already states the level.` : ''}${usesLevel ? `
+BAD (do not write like this): "[@Name] demonstrates [@Level] understanding of Grade 12 Physics concepts, particularly evident in [@Possessive] strong natural intuition for problem-solving. On the Dynamics Unit Test, [@Subject] applies complex principles effectively, especially in the unit on dynamics. An area for growth is for [@Object] to participate more actively in class discussions. For the remainder of the course, [@Subject] is encouraged to share [@Possessive] insights and questions more frequently to deepen collective understanding."
+GOOD (same content): "[@Name] demonstrates [@Level] understanding of the Grade 12 Physics course and approaches problem-solving with natural intuition. [@Possessive2] work on the Dynamics Unit Test shows that [@Subject] can apply complex principles accurately. An area for growth is participating more actively in class discussions. For the remainder of the course, [@Subject] is encouraged to share [@Possessive] questions and ideas during class discussions."` : ''}
 `;
   const reportName = isMidterm ? "midterm progress report" : "final report card";
   const systemPrompt = `You are an experienced Ontario high school teacher. You write professional, grammatically correct, specific, and natural-sounding ${reportName} comments. You follow formatting instructions precisely and output only what is asked — no commentary, no preamble.`;
@@ -407,7 +417,8 @@ Output only the Excel formula, nothing else.`;
   const failToneRule = () => isMidterm
     ? `- MIDTERM: write in the PRESENT TENSE throughout (e.g. "demonstrates", "does not yet provide", "is encouraged to") — never past tense or "has demonstrated". Sentence 3 must be a concrete next step for the rest of THIS course — NEVER mention future courses or next year
 - Strength-focused opening examples (match the style; base the content on THIS student's strengths):
-${STRENGTH_OPENERS.map(s => `    ${s}`).join('\n')}`
+${STRENGTH_OPENERS.map(s => `    ${s}`).join('\n')}
+- Write plainly for parents: one idea per sentence; "An area for growth is [-ing phrase]" (NEVER "is for [@Object] to"); no padding like "to reach [@Possessive] full potential"`
     : `- All past tense, no forward-looking language or encouragement`;
 
   const buildFailPrompt = () => `Write a Grade ${form.grade || 'high school'} ${form.subject || 'course'} Ontario ${reportName} comment for a ${isMidterm ? 'student who is currently FAILING' : 'FAILING student'} as an Excel formula.
