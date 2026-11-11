@@ -375,6 +375,71 @@ BAD (do not write like this): "[@Name] demonstrates [@Level] understanding of Gr
 GOOD (same content): "[@Name] demonstrates [@Level] understanding of the Grade 12 Physics course and approaches problem-solving with natural intuition. [@Possessive2] work on the Dynamics Unit Test shows that [@Subject] can apply complex principles accurately. [@Subject2] could benefit from participating more actively in class discussions. For the remainder of the course, [@Subject] is encouraged to share [@Possessive] questions and ideas during class discussions."` : ''}
 `;
   const reportName = isMidterm ? "midterm progress report" : "final report card";
+
+  // ── Comment checker ────────────────────────────────────────────────────
+  // Finds rule breaks we can detect in code. Used to give a weaker model
+  // (Groq) specific things to fix in a revision pass.
+  const levelRequired = !form.failing && usesLevel;
+  const checkComment = (formula) => {
+    const problems = [];
+    // Readable version with codes kept as [Name], [Level]… so sentences can be inspected.
+    const text = formula.replace(/^=/, "").replace(/"?&?\[@(\w+)\]&?"?/g, " [$1] ").replace(/"/g, "").replace(/\s+/g, " ").trim();
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const find = (re) => (text.match(re) || [])[0];
+    let m;
+    if ((m = find(/\bteachers?\b/i))) problems.push(`Mentions "${m}" — use a general phrase like "seek support" instead.`);
+    if (/\bcredits?\b/i.test(text)) problems.push(`Mentions the credit — refer to "meeting the course expectations" instead.`);
+    if (levelRequired && !formula.includes("[@Level]")) problems.push(`Missing [@Level] — sentence 1 must contain "&[@Level]&" understanding of the Grade ${form.grade} ${form.subject} course.`);
+    if (!levelRequired && formula.includes("[@Level]")) problems.push(`Uses [@Level], which must NOT appear in this comment — remove it.`);
+    const levelSentence = sentences.find(s => s.includes("[Level]"));
+    if (levelSentence && !/\bcourse\b/i.test(levelSentence))
+      problems.push(`The [@Level] sentence doesn't name the course — write "&[@Level]&" understanding of the Grade ${form.grade} ${form.subject} course".`);
+    if ((m = find(/\bappl(?:y|ies) (?:concepts|skills|principles) from the [^.]*?\b(?:test|exam|assignment|quiz|project|lab)\b/i)))
+      problems.push(`Says "${m}" — describe what the work shows instead: "[@Possessive2] work on the … shows that [@Subject] can…".`);
+    if (levelSentence && (m = levelSentence.match(/\b(strong|excellent|good|solid|exceptional|outstanding)\b/i)))
+      problems.push(`Uses "${m[0]}" in the same sentence as [@Level] — remove it; [@Level] already states the level.`);
+    if (isMidterm && (m = find(/\b(?:has|have) (?:demonstrated|shown|shown|developed)\b|\b(?:demonstrated|showed|struggled|was|were)\b/i)))
+      problems.push(`Uses past tense ("${m}") — midterm comments must be in the present tense ("demonstrates", "is developing").`);
+    if (isMidterm && !thriving && /an area for growth is/i.test(text)) problems.push(`Announces "An area for growth is…" — phrase it subtly, e.g. "[@Subject2] could benefit from…".`);
+    if (/is for \[(?:Object|Subject)\] to/i.test(text)) problems.push(`Uses "is for [@Object] to…" — rephrase naturally.`);
+    if (thriving && (m = find(/\b(?:could|would) benefit\b|area for growth|needs to|should work on|is encouraged to work on/i)))
+      problems.push(`Includes an area for growth ("${m}"), but this student is doing well — remove it and encourage current habits instead.`);
+    if ((m = find(/particularly evident|collective understanding|full potential|academic success|hard-working approach|sophisticated/i)))
+      problems.push(`Uses the filler/inflated wording "${m}" — say it plainly.`);
+    // The same longer word twice ("hard-working … hard-working", "demonstrates … demonstrates").
+    const common = new Set(["understanding", "course", "continue", "encouraged", "remainder", "student", "expectations", form.subject.toLowerCase()]);
+    const counts = {};
+    for (const w of text.replace(/\[\w+\]/g, " ").toLowerCase().match(/[a-z][a-z-]{5,}/g) || []) if (!common.has(w)) counts[w] = (counts[w] || 0) + 1;
+    const repeats = Object.keys(counts).filter(w => counts[w] > 1);
+    if (repeats.length) problems.push(`Repeats ${repeats.map(w => `"${w}"`).join(", ")} — use each word only once.`);
+    if (sentences.length > 4) problems.push(`Too long (${sentences.length} sentences) — use 3–4 sentences.`);
+    return problems;
+  };
+  // Short second-pass prompt: fix the detected problems and smooth the wording.
+  const buildRevisionPrompt = (draft, problems) => `Here is a draft ${reportName} comment for a Grade ${form.grade || ''} ${form.subject || ''} student${form.failing ? ' who is not currently passing' : thriving ? ' who is doing well' : ''}, written as an Excel formula:
+
+${draft}
+
+Revise it so it reads naturally and professionally to a parent.
+${problems.length ? `Fix these problems:\n${problems.map(p => `- ${p}`).join('\n')}` : 'No rule problems were found — only improve wording that sounds awkward or unnatural.'}
+
+Also make sure:
+- One clear idea per sentence, plain everyday wording, no filler, no word used twice.
+- ${isMidterm ? 'Present tense throughout ("demonstrates", "is developing", "is encouraged to").' : 'Past tense, except a closing sentence that looks ahead to future courses.'}
+- Never mention the teacher or the credit.
+- Keep the same meaning, facts and number of sentences. Do not invent anything new.
+- Keep every code exactly as written (${levelRequired ? '[@Level], ' : ''}[@Name], [@Subject2], [@Subject], [@Possessive2], [@Possessive], [@Object])${levelRequired ? '' : ' and do NOT add [@Level]'}, in the same Excel format: =[@Name]&" text "&[@Subject2]&" more text."
+
+Output ONLY the revised formula.`;
+  // A revision is only used if it is still a well-formed formula with the right codes.
+  const KNOWN_CODES = new Set(["Name", "Level", "Subject2", "Subject", "Object2", "Object", "Possessive2", "Possessive"]);
+  const isValidFormula = (f) =>
+    f.startsWith('=[@Name]&"') &&
+    !/\n/.test(f) &&
+    (f.match(/"/g) || []).length % 2 === 0 &&
+    [...f.matchAll(/\[@(\w+)\]/g)].every(x => KNOWN_CODES.has(x[1])) &&
+    (f.match(/\[@Name\]/g) || []).length === 1 &&
+    f.includes("[@Level]") === levelRequired;
   const systemPrompt = `You are an experienced Ontario high school teacher. You write professional, grammatically correct, specific, and natural-sounding ${reportName} comments. You follow formatting instructions precisely and output only what is asked — no commentary, no preamble.`;
 
   useEffect(() => {
@@ -965,12 +1030,16 @@ Output only the Excel formula, nothing else.`;
       if (/quota|exhausted|rate limit|429|too many requests/i.test(msg ?? '')) return `${service}'s free usage limit has been reached — wait a minute and try again; if it keeps happening, the daily limit is used up until tomorrow (${msg})`;
       return `${service}: ${msg}`;
     };
-    const finish = (raw, by) => {
+    // AI reply -> clean Excel formula.
+    const toFormula = (raw) => {
       // Some models emit Unicode non-breaking hyphens/minus signs and narrow
       // spaces (as in "problem-solving"); use plain characters so Excel shows them normally.
       raw = raw.replace(/[\u2010\u2011\u2012\u2212]/g, "-").replace(/[\u00a0\u202f\u2007]/g, " ");
       const hasTokens = /\{(NAME|THEY|THEM|THEIR|LEVEL)\}/i.test(raw);
-      const text = hasTokens ? convertToFormula(raw) : cleanFormula(raw);
+      return hasTokens ? convertToFormula(raw) : cleanFormula(raw);
+    };
+    const finish = (raw, by) => show(toFormula(raw), by);
+    const show = (text, by) => {
       setGenerated(text);
       setEdited(text);
       setGeneratedBy(by);
@@ -1050,17 +1119,17 @@ Output only the Excel formula, nothing else.`;
     if (groqKey) {
       if (geminiOn) setError(`Gemini unavailable — trying Groq…  (${geminiWhy})`);
       const groqHeaders = { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` };
-      const callGroq = async (model) => {
+      const callGroq = async (model, userPrompt = form.failing ? buildGroqFailPrompt() : buildGroqPassPrompt(), temperature = 0.4) => {
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: groqHeaders,
           body: JSON.stringify({
             model,
             max_tokens: 4096,
-            temperature: 0.4,
+            temperature,
             messages: [
               { role: "system", content: systemPrompt },
-              { role: "user", content: form.failing ? buildGroqFailPrompt() : buildGroqPassPrompt() },
+              { role: "user", content: userPrompt },
             ],
           }),
         });
@@ -1089,7 +1158,29 @@ Output only the Excel formula, nothing else.`;
           }
         }
         if (result.raw) {
-          finish(result.raw, `${model} (Groq)`);
+          // Groq's free models are weaker writers, so give the draft one revision
+          // pass: list the rule breaks we can detect in code, and ask for natural
+          // wording. The revision is kept only if it's valid and no worse.
+          const draft = toFormula(result.raw);
+          const draftProblems = checkComment(draft);
+          let text = draft, revised = false;
+          setError("Polishing the wording…");
+          try {
+            const rev = await callGroq(model, buildRevisionPrompt(draft, draftProblems), 0.3);
+            if (rev.raw) {
+              const candidate = toFormula(rev.raw);
+              // Same kind of problem = same message with the quoted details removed.
+              const kind = p => p.replace(/"[^"]*"/g, '""');
+              const draftKinds = new Set(draftProblems.map(kind));
+              const candProblems = checkComment(candidate);
+              const noNewKinds = candProblems.every(p => draftKinds.has(kind(p)));
+              if (isValidFormula(candidate) && noNewKinds && candProblems.length <= draftProblems.length) {
+                text = candidate;
+                revised = candidate !== draft;
+              }
+            }
+          } catch { /* keep the draft if the revision call fails (e.g. rate limit) */ }
+          show(text, `${model} (Groq)${revised ? " · revised" : ""}`);
           if (geminiWhy) setFallbackNote(geminiWhy);
           return;
         }
