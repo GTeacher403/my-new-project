@@ -236,9 +236,9 @@ export default function App() {
 
   useEffect(() => {
     const storedKey = localStorage.getItem("rc_gemini_key");
-    if (storedKey) setApiKey(storedKey);
+    if (storedKey) setApiKey(storedKey.trim());
     const storedGroqKey = localStorage.getItem("rc_groq_key");
-    if (storedGroqKey) setGroqKey(storedGroqKey);
+    if (storedGroqKey) setGroqKey(storedGroqKey.trim());
 
     const storedComments = localStorage.getItem("rc_comments");
     if (storedComments) {
@@ -251,13 +251,18 @@ export default function App() {
     try { localStorage.setItem("rc_comments", JSON.stringify(data)); } catch {}
   };
 
+  // Keys pasted from a web page often carry a trailing space or newline,
+  // which the APIs reject as "invalid key" - strip all whitespace.
+  const cleanKey = (key) => key.replace(/\s+/g, "");
   const saveApiKey = (key) => {
-    setApiKey(key);
-    localStorage.setItem("rc_gemini_key", key);
+    const k = cleanKey(key);
+    setApiKey(k);
+    localStorage.setItem("rc_gemini_key", k);
   };
   const saveGroqKey = (key) => {
-    setGroqKey(key);
-    localStorage.setItem("rc_groq_key", key);
+    const k = cleanKey(key);
+    setGroqKey(k);
+    localStorage.setItem("rc_groq_key", k);
   };
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -673,7 +678,14 @@ Output only the Excel formula, nothing else.`;
   };
 
   const generate = async () => {
-    if (!apiKey) { setError("Please enter your Gemini API key first."); setShowKeyInput(true); return; }
+    const geminiOn = useGemini && !!apiKey;
+    if (!geminiOn && !groqKey) {
+      setError(useGemini
+        ? "Please enter your Gemini API key first (or a Groq key)."
+        : "Gemini is turned off — please enter a Groq API key.");
+      setShowKeyInput(true);
+      return;
+    }
     if (form.failing) {
       if (!form.failReasons) { setError("Please provide reasons for failing."); return; }
     } else {
@@ -684,60 +696,66 @@ Output only the Excel formula, nothing else.`;
     setGenerated("");
     setEdited("");
 
-    const MODELS = useGemini ? ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"] : [];
-    const isRetryable = (msg) => /high demand|overloaded|503|capacity|rate limit|quota/i.test(msg ?? '');
+    const MODELS = geminiOn ? ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"] : [];
+    // Errors where a different model might still work (busy, or this model
+    // isn't available to this key) -> move on to the next model.
+    const isRetryable = (msg) => /high demand|overloaded|503|capacity|rate limit|quota|exhausted|not found|not supported|404/i.test(msg ?? '');
+    const isKeyProblem = (msg) => /api key|api_key|permission|unauthori[sz]ed|invalid.*key|401|403/i.test(msg ?? '');
+    const isNetworkProblem = (msg) => /failed to fetch|networkerror|load failed|network request failed/i.test(msg ?? '');
+    const explain = (service, msg) => {
+      if (isKeyProblem(msg)) return `${service} rejected your API key — check it was copied in full (${msg})`;
+      if (isNetworkProblem(msg)) return `Couldn't reach ${service}. Your network (e.g. a school network) may be blocking it — try another connection.`;
+      return `${service}: ${msg}`;
+    };
+    const finish = (raw, by) => {
+      const hasTokens = /\{(NAME|THEY|THEM|THEIR|LEVEL)\}/i.test(raw);
+      const text = hasTokens ? convertToFormula(raw) : cleanFormula(raw);
+      setGenerated(text);
+      setEdited(text);
+      setGeneratedBy(by);
+      setError("");
+      setLoading(false);
+    };
     const body = JSON.stringify({
       systemInstruction: { parts: [{ text: "You are an experienced Ontario high school teacher. You write professional, grammatically correct, specific, and natural-sounding final report card comments. You follow formatting instructions precisely and output only what is asked — no commentary, no preamble." }] },
       contents: [{ parts: [{ text: form.failing ? buildFailPrompt() : buildPassPrompt() }] }],
       generationConfig: { maxOutputTokens: 2048, temperature: 0.5 },
     });
 
-    let lastError = "";
+    let geminiError = "";
+    geminiLoop:
     for (let m = 0; m < MODELS.length; m++) {
       const model = MODELS[m];
-      const label = m === 0 ? "" : ` (trying ${model})`;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (attempt > 0 || m > 0) {
-          setError(`High demand — retrying${label}…`);
-          await new Promise(r => setTimeout(r, 1500));
+      if (m > 0) {
+        setError(`Trying ${model}…`);
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, body }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (data.error || !res.ok) {
+          geminiError = data.error?.message || `HTTP ${res.status}`;
+          if (isRetryable(geminiError)) continue;  // try the next model
+          break geminiLoop;                         // bad key etc. - other models won't help
         }
-        try {
-          const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-            { method: "POST", headers: { "Content-Type": "application/json" }, body }
-          );
-          const data = await res.json();
-          if (data.error) {
-            lastError = data.error.message;
-            if (isRetryable(lastError)) break; // move to next model
-            setError(`API error: ${lastError}`);
-            setLoading(false);
-            return;
-          }
-          const candidate = data.candidates?.[0];
-          if (candidate?.finishReason === 'MAX_TOKENS') {
-            lastError = "Output cut off — retrying";
-            break;
-          }
-          const raw = candidate?.content?.parts?.[0]?.text ?? '';
-          const hasTokens = /\{(NAME|THEY|THEM|THEIR|LEVEL)\}/i.test(raw);
-          const text = hasTokens ? convertToFormula(raw) : cleanFormula(raw);
-          setGenerated(text);
-          setEdited(text);
-          setGeneratedBy(model);
-          setError("");
-          setLoading(false);
-          return;
-        } catch (e) {
-          lastError = e.message;
-          if (!isRetryable(lastError)) { setError(`Error: ${lastError}`); setLoading(false); return; }
-          break;
-        }
+        const candidate = data.candidates?.[0];
+        if (candidate?.finishReason === 'MAX_TOKENS') { geminiError = "Output cut off"; continue; }
+        const raw = candidate?.content?.parts?.[0]?.text ?? '';
+        if (!raw) { geminiError = `No text returned (${candidate?.finishReason || "empty response"})`; continue; }
+        finish(raw, model);
+        return;
+      } catch (e) {
+        geminiError = e.message;
+        break geminiLoop; // network failure - every Gemini model would fail the same way
       }
     }
-    // Last resort: Groq
+    // Fallback (or primary, when Gemini is off / has no key): Groq
+    let groqError = "";
     if (groqKey) {
-      setError("Gemini unavailable — trying Groq as last resort…");
+      if (geminiOn) setError("Gemini unavailable — trying Groq…");
       try {
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
@@ -752,21 +770,21 @@ Output only the Excel formula, nothing else.`;
             ],
           }),
         });
-        const data = await res.json();
-        if (!data.error) {
-          const raw = data.choices?.[0]?.message?.content ?? '';
-          const hasTokens = /\{(NAME|THEY|THEM|THEIR|LEVEL)\}/i.test(raw);
-          const text = hasTokens ? convertToFormula(raw) : cleanFormula(raw);
-          setGenerated(text);
-          setEdited(text);
-          setGeneratedBy("llama-3.3-70b (Groq)");
-          setError("");
-          setLoading(false);
+        const data = await res.json().catch(() => ({}));
+        const raw = data.choices?.[0]?.message?.content ?? '';
+        if (res.ok && !data.error && raw) {
+          finish(raw, "llama-3.3-70b (Groq)");
           return;
         }
-      } catch {}
+        groqError = data.error?.message || `HTTP ${res.status}`;
+      } catch (e) {
+        groqError = e.message;
+      }
     }
-    setError(`API error: ${lastError || "All models unavailable. Try again shortly."}`);
+    const parts = [];
+    if (geminiError) parts.push(explain("Gemini", geminiError));
+    if (groqError) parts.push(explain("Groq", groqError));
+    setError(parts.length ? parts.join("  •  ") : "All models unavailable. Try again shortly.");
     setLoading(false);
   };
 
