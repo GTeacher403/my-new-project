@@ -24,6 +24,9 @@ const SINGULAR_VERBS = new Set(("is has does isn't doesn't hasn't was wasn't app
 // Comments must never refer to the teacher ("her teacher", "the teacher", "me").
 const NO_TEACHER_RULE = `- NEVER use the word "teacher" (or "instructor", "I", "me", "my") anywhere in the comment. Use general phrases instead: "seek support", "seek extra help", "access available supports", "attend extra help sessions", "ask questions when concepts are unclear". WRONG: "is encouraged to meet with "&[@Possessive]&" teacher". RIGHT: "is encouraged to seek support".`;
 
+// Failing comments must not talk about earning/getting the credit.
+const NO_CREDIT_RULE = `- NEVER mention the credit at all ("earn the credit", "get the credit", "obtain a credit", "credit"). Refer instead to "meeting the course expectations", "demonstrating the learning expectations" or "providing sufficient evidence of learning".`;
+
 // ── Groq model selection ──────────────────────────────────────────────
 // Groq retires models periodically. We start with GROQ_DEFAULT_MODEL; if Groq
 // reports it as retired, we fetch the key's model list and pick a replacement.
@@ -502,12 +505,12 @@ Output only the Excel formula, nothing else.`;
   };
 
   // Failing comments differ most between terms: a final comment closes the
-  // door (no encouragement), a midterm comment says what must happen to still earn the credit.
+  // door (no encouragement), a midterm comment says what must happen to still meet the course expectations.
   const failExample = () => isMidterm
-    ? `=[@Name]&" contributes positively to the classroom environment and demonstrates strength in building connections with peers and staff. "&[@Subject2]&" would benefit from completing key assignments and evaluations, as "&[@Possessive]&" current work does not yet provide sufficient evidence of learning to earn a credit in Grade 9 Science. To earn the credit by the end of the course, "&[@Subject]&" is encouraged to submit all outstanding assignments and attend extra help sessions before the final evaluation."`
-    : `=[@Name]&" did not meet the required expectations to pass Grade 9 Science. "&[@Possessive2]&" performance on assessments did not demonstrate sufficient understanding of the course expectations, as several key assignments and evaluations were not completed to a passing standard. Despite support being made available, "&[@Subject]&" was unable to provide the evidence of learning required to earn a credit."`;
+    ? `=[@Name]&" contributes positively to the classroom environment and demonstrates strength in building connections with peers and staff. "&[@Subject2]&" would benefit from completing key assignments and evaluations, as "&[@Possessive]&" current work does not yet provide sufficient evidence of learning to meet the expectations of Grade 9 Science. For the remainder of the course, "&[@Subject]&" is encouraged to submit all outstanding assignments and attend extra help sessions before the final evaluation."`
+    : `=[@Name]&" did not meet the required expectations to pass Grade 9 Science. "&[@Possessive2]&" performance on assessments did not demonstrate sufficient understanding of the course expectations, as several key assignments and evaluations were not completed to a passing standard. Despite support being made available, "&[@Subject]&" was unable to provide sufficient evidence of learning by the end of the course."`;
   const failStructure = () => isMidterm
-    ? `(1) AREA OF STRENGTH — a strength-focused opening built from the Strengths below (never open with failing or a deficit), (2) AREA FOR GROWTH — what is currently lacking using the reasons below, making clear the student is not yet meeting the expectations needed to earn the credit, (3) NEXT STEPS — a specific next step for the REMAINDER OF THIS COURSE to earn the credit`
+    ? `(1) AREA OF STRENGTH — a strength-focused opening built from the Strengths below (never open with failing or a deficit), (2) AREA FOR GROWTH — what is currently lacking using the reasons below, making clear the student is not yet meeting the course expectations, (3) NEXT STEPS — a specific next step for the REMAINDER OF THIS COURSE to meet the course expectations`
     : `(1) state they did not pass, (2) explain what specifically was lacking using the reasons provided, (3) reference support or a concluding factual statement`;
   const failToneRule = () => isMidterm
     ? `- MIDTERM: write in the PRESENT TENSE throughout (e.g. "demonstrates", "does not yet provide", "is encouraged to") — never past tense or "has demonstrated". Sentence 3 must be a concrete next step for the rest of THIS course — NEVER mention future courses or next year
@@ -535,6 +538,7 @@ RULES:
 - Responsibility on student's actions: use "did not provide sufficient evidence", "was unable to demonstrate" — NEVER "had insufficient opportunity" or "was not given the chance"
 ${failToneRule()}
 ${NO_TEACHER_RULE}
+${NO_CREDIT_RULE}
 
 ${isMidterm ? `Strengths (use for the opening sentence): ${form.strengths}\n` : ''}Reasons for failing: ${form.failReasons || 'not specified'}
 Support available: ${isNA(form.failSupport) || !form.failSupport ? 'not specified' : form.failSupport}
@@ -643,6 +647,7 @@ RULES:
 - NEVER use "had insufficient opportunity" or "was not given the chance" — use "was unable to demonstrate" or "did not provide sufficient evidence"
 ${failToneRule()}
 ${NO_TEACHER_RULE}
+${NO_CREDIT_RULE}
 
 ${isMidterm ? `Strengths (use for the opening sentence): ${form.strengths}\n` : ''}Reasons for failing: ${form.failReasons || 'not specified'}
 Support available: ${isNA(form.failSupport) || !form.failSupport ? 'not specified' : form.failSupport}
@@ -1329,6 +1334,11 @@ Output only the Excel formula, nothing else.`;
                 {/\bteachers?\b/i.test(edited) && (
                   <div role="alert" style={{ fontSize: 12, color: "#9a6700", background: "#fff8e1", border: "1px solid #f1d27a", borderRadius: 8, padding: "6px 10px", marginTop: 6, textAlign: "left" }}>
                     ⚠️ This comment mentions "teacher". Edit it to something general like "seek support", or generate again.
+                  </div>
+                )}
+                {/\bcredits?\b/i.test(edited) && (
+                  <div role="alert" style={{ fontSize: 12, color: "#9a6700", background: "#fff8e1", border: "1px solid #f1d27a", borderRadius: 8, padding: "6px 10px", marginTop: 6, textAlign: "left" }}>
+                    ⚠️ This comment mentions the credit. Edit it to something like "meet the course expectations", or generate again.
                   </div>
                 )}
                 {generatedBy && <div style={{ fontSize: 11, color: "#aaa", marginTop: 4 }}>Generated by {generatedBy}</div>}
