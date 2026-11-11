@@ -287,7 +287,11 @@ export default function App() {
   const usesLevel = !isMidterm || ["an excellent", "a strong", "a good"].includes(form.level);
   // "Doing well" option: no area for growth, close by encouraging current habits.
   const thriving = !form.failing && !!form.thriving;
-  const thrivingImprovements = `Areas to improve: NONE — this student is doing well. Do NOT include any weakness, area for growth, "could benefit from", "is encouraged to work on", or new next step (ignore any such sentence in the example). Instead, the closing sentence encourages the student to CONTINUE specific current habits drawn from the Strengths${isMidterm ? ' for the rest of THIS course' : ', ending with the future course reference'}.`;
+  const thrivingImprovements = `Areas to improve: NONE — this student is doing well. Do NOT include any weakness, area for growth, "could benefit from", "is encouraged to work on", or new next step (ignore any such sentence in the example). Instead, the closing sentence encourages the student to CONTINUE specific current habits drawn from the Strengths${isMidterm ? ' for the rest of THIS course' : ', ending with the future course reference'}. Only encourage habits that appear in the Strengths — never invent new ones (e.g. "diligent preparation", "active participation") that the teacher did not list.`;
+  // Example for a "doing well" midterm — no growth sentence, closes with "continue".
+  const thrivingExample = usesLevel
+    ? `=[@Name]&" demonstrates "&[@Level]&" understanding of the Grade 12 Physics course and approaches problem-solving with natural intuition. "&[@Possessive2]&" work on the Dynamics Unit Test shows that "&[@Subject]&" can apply complex principles accurately. For the remainder of the course, "&[@Subject]&" is encouraged to continue approaching challenging problems with the same curiosity and care."`
+    : `=[@Name]&" arrives prepared for class and approaches new learning with curiosity. "&[@Subject2]&" asks thoughtful questions that help "&[@Object]&" make sense of new concepts in the unit on genetics. For the remainder of the course, "&[@Subject]&" is encouraged to continue coming to class prepared and asking questions whenever something is unclear."`;
   const midtermStructureRules = () => `
 MIDTERM STRUCTURE (school requirement) — the comment MUST follow this order:
   (a) AREA OF STRENGTH — the opening sentence is strength-focused, built from the Strengths given.${usesLevel ? ' Pair [@Level] understanding with a specific strength in this sentence.' : ' Do NOT open with the achievement level or with anything that sounds like a deficit.'}
@@ -302,6 +306,7 @@ WRITING QUALITY — the comment is read by parents, so it must sound natural and
   - One clear idea per sentence. No stacked qualifiers like "particularly evident in", "especially in", "which is reflected in".${thriving ? '' : `
   - Area for growth: phrase it subtly, e.g. "[@Subject2] could benefit from participating more actively in class discussions." Vary the wording ("could benefit from", "would benefit from", "[-ing phrase] would help [@Object]…"). NEVER write the label "An area for growth is…" and NEVER "is for [@Object] to…".`}
   - Completed assessments stay in the present tense by describing what the work SHOWS: "[@Possessive2] work on the Dynamics Unit Test shows that [@Subject] can apply complex principles accurately." NEVER "On the [test], [@Subject] applies…".
+  - Don't repeat a verb (e.g. "demonstrates" twice) and avoid inflated words like "sophisticated".${usesLevel ? ` Sentence 1 names the course: "[@Level] understanding of the Grade ${form.grade || 'X'} ${form.subject || 'subject'} course".` : ''}
   - Never mention the same unit or topic twice. If the Best assessment already names a unit (e.g. "Dynamics Unit Test"), do NOT also add the curriculum topic for that unit.
   - No vague padding: "to deepen collective understanding", "to reach [@Possessive] full potential", "to achieve academic success".${usesLevel ? `
   - Never put "strong", "excellent", "good" or "solid" anywhere near [@Level] — the placeholder already states the level.` : ''}${usesLevel && !thriving ? `
@@ -374,7 +379,7 @@ GOOD (same content): "[@Name] demonstrates [@Level] understanding of the Grade 1
 
   const buildPassPrompt = () => {
     const topics = form.subject && form.grade ? getTopics(form.subject, form.grade, form.stream) : null;
-    const example = !isMidterm
+    const example = (thriving && isMidterm) ? thrivingExample : !isMidterm
       ? `=[@Name]&" demonstrated "&[@Level]&" understanding of the Grade 11 Biology course. "&[@Subject2]&" supported "&[@Possessive]&" conclusions with strong evidence, particularly in the unit on genetics. The culminating lab report reflected careful attention to experimental design. "&[@Subject2]&" is encouraged to develop these skills in future science courses."`
       : usesLevel
         ? `=[@Name]&" demonstrates "&[@Level]&" understanding of the Grade 11 Biology course and consistently applies feedback to improve "&[@Possessive]&" work. "&[@Subject2]&" supports "&[@Possessive]&" conclusions with clear evidence, particularly in the unit on genetics. Explaining each step of "&[@Possessive]&" reasoning in written responses would further strengthen "&[@Possessive]&" work. For the remainder of the course, "&[@Subject]&" is encouraged to review feedback on each assessment before the final evaluation."`
@@ -495,7 +500,7 @@ Output only the Excel formula, nothing else.`;
       "some": "balanced and honest. Recognize effort but clearly note significant areas needing development. Do NOT use words like well-reasoned, exceptional, careful, outstanding, impressive, or any language implying strong achievement.",
       "limited": "supportive but honest. Focus on foundational development. NEVER use impressive, excelled, outstanding, well-reasoned, or any praise language.",
     };
-    const example = !isMidterm
+    const example = (thriving && isMidterm) ? thrivingExample : !isMidterm
       ? `=[@Name]&" demonstrated "&[@Level]&" understanding of the Grade 11 Biology course. "&[@Subject2]&" showed developing skill in the unit on genetics, though "&[@Subject]&" sometimes struggled to apply concepts independently. The culminating lab reflected foundational knowledge of experimental design. "&[@Subject2]&" is encouraged to seek clarification when needed in future science courses."`
       : usesLevel
         ? `=[@Name]&" demonstrates "&[@Level]&" understanding of the Grade 11 Biology course and applies feedback to improve "&[@Possessive]&" work. "&[@Subject2]&" could benefit from explaining each step of "&[@Possessive]&" reasoning in written responses on genetics. For the remainder of the course, "&[@Subject]&" is encouraged to review feedback on each assessment before the final evaluation."`
@@ -518,13 +523,14 @@ ${midtermStructureRules()}`
       ? `2. [@Level] MUST appear exactly once before a noun like "understanding" or "grasp". The verb immediately before it must be simple: "demonstrated", "showed", "developed", or "displayed"${isMidterm ? ' (midterm: "demonstrates" / "shows")' : ''}. NEVER write compound phrases like "excelled in demonstrating" or "showed exceptional" before [@Level] — [@Level] already contains the achievement level, so adding praise words before it is redundant.`
       : `2. Do NOT use [@Level]. Open with a strength instead (see MIDTERM STRUCTURE).`;
     const sentence1Rule = isMidterm
-      ? `3. SENTENCE 1 is the AREA OF STRENGTH${usesLevel ? ' and contains [@Level]' : ''} — NEVER name a specific unit or topic in sentence 1.`
+      ? `3. SENTENCE 1 is the AREA OF STRENGTH${usesLevel ? ` and contains "[@Level] understanding of the Grade ${form.grade || 'X'} ${form.subject || 'subject'} course" (always name the course)` : ''} — NEVER name a specific unit or topic in sentence 1.
+3b. Describe assessments by what the work SHOWS: "[@Possessive2] work on the [assessment] shows that [@Subject] can…". NEVER "applies concepts from the [test]".`
       : `3. SENTENCE 1 must describe the student's OVERALL performance in the course — NEVER name a specific unit or topic in sentence 1. WRONG: "demonstrated [@Level] understanding of quadratic relations". RIGHT: "demonstrated [@Level] understanding of the Grade 10 Mathematics course."`;
     const sentencesRule = isMidterm
       ? `4. Write EXACTLY 3 sentences total. Sentence 1: area of strength. Sentence 2: ${thriving ? 'another specific strength (no area for growth)' : 'area for growth'}. Sentence 3: ${closing}. STOP after sentence 3.`
       : `4. Write EXACTLY 3 sentences total — no more, no less. Sentence 1: overall course performance with [@Level]. Sentence 2: a specific academic observation. Sentence 3: ${closing}. STOP after sentence 3. Do NOT write a 4th sentence.`;
     const bannedRule = isMidterm
-      ? `6. BANNED words and phrases in the comment body: "arrived on time", "worked hard", "well-reasoned", "strong ability", "exceptional", "outstanding", "impressive" (unless level is an excellent or a strong), "classes" (use "courses" instead). Learning-skills strengths like "a willingness to learn" or "arrives prepared for class" ARE allowed in the opening when they match the Strengths given.`
+      ? `6. BANNED words and phrases in the comment body: "arrived on time", "worked hard", "well-reasoned", "strong ability", "sophisticated", "exceptional", "outstanding", "impressive" (unless level is an excellent or a strong), "classes" (use "courses" instead).${usesLevel ? ' Never put "strong", "excellent", "good" or "solid" in the same sentence as [@Level].' : ''} Never use the same verb twice in the comment. Learning-skills strengths like "a willingness to learn" or "arrives prepared for class" ARE allowed in the opening when they match the Strengths given.`
       : `6. BANNED words and phrases in the comment body: "arrived on time", "on time for class", "respect for the learning environment", "positive attitude", "willingness to engage", "worked hard", "well-reasoned", "strong ability", "exceptional", "outstanding", "impressive" (unless level is an excellent or a strong), "classes" (use "courses" instead)`;
     return `You are an Ontario high school teacher writing a ${reportName} comment. Output ONLY an Excel formula — no plain text, no preamble.
 
@@ -865,6 +871,9 @@ Output only the Excel formula, nothing else.`;
       return `${service}: ${msg}`;
     };
     const finish = (raw, by) => {
+      // Some models emit Unicode non-breaking hyphens/minus signs and narrow
+      // spaces (as in "problem-solving"); use plain characters so Excel shows them normally.
+      raw = raw.replace(/[\u2010\u2011\u2012\u2212]/g, "-").replace(/[\u00a0\u202f\u2007]/g, " ");
       const hasTokens = /\{(NAME|THEY|THEM|THEIR|LEVEL)\}/i.test(raw);
       const text = hasTokens ? convertToFormula(raw) : cleanFormula(raw);
       setGenerated(text);
