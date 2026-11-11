@@ -355,8 +355,8 @@ export default function App() {
 MIDTERM STRUCTURE (school requirement) — the comment MUST follow this order:
   (a) AREA OF STRENGTH — the opening sentence is strength-focused, built from the Strengths given.${usesLevel ? ' Pair [@Level] understanding with a specific strength in this sentence.' : ' Do NOT open with the achievement level or with anything that sounds like a deficit.'}
 ${thriving ? `  (b) ANOTHER STRENGTH — this student is doing well, so instead of an area for growth, give one more specific academic strength or habit. Do NOT include any weakness or "could benefit from" sentence.
-  (c) KEEP IT UP — the final sentence encourages the student to CONTINUE specific current habits for the rest of THIS course (e.g. "For the remainder of the course, [@Subject] is encouraged to continue [specific habit]."). Do NOT suggest anything new to work on.` : `  (b) AREA FOR GROWTH — one sentence naming a specific area for growth, phrased subtly and constructively (e.g. "[@Subject2] could benefit from…", "[@Subject2] would benefit from…", "Continuing to work on … would help [@Object]…"). Do NOT announce it with the label "An area for growth is…" — the structure should be felt, not stated.
-  (c) NEXT STEPS — the final sentence gives a concrete next step for the rest of THIS course.`}
+  (c) KEEP IT UP — the final sentence encourages the student to CONTINUE specific current habits for the rest of THIS course (e.g. "For the remainder of the course, [@Subject] is encouraged to continue [specific habit]."). Do NOT suggest anything new to work on.` : `  (b) AREA FOR GROWTH — its OWN sentence (never attached to another sentence with a comma or "and") naming a specific area for growth, phrased subtly and constructively (e.g. "[@Subject2] could benefit from…", "[@Subject2] would benefit from…", "Continuing to work on … would help [@Object]…"). Do NOT announce it with the label "An area for growth is…" — the structure should be felt, not stated.
+  (c) NEXT STEPS — the final sentence gives a concrete next step for the rest of THIS course that follows directly from the area for growth in (b) (e.g. growth: participating in discussions → next step: sharing at least one idea or question in each class discussion).`}
 WRONG opening (not strength-focused): "[@Name] is demonstrating a limited understanding of this course."
 Strength-focused opening examples (match the style; base the content on THIS student's strengths):
 ${STRENGTH_OPENERS.map(s => `  - ${s}`).join('\n')}
@@ -412,6 +412,12 @@ GOOD (same content): "[@Name] demonstrates [@Level] understanding of the Grade 1
     for (const w of text.replace(/\[\w+\]/g, " ").toLowerCase().match(/[a-z][a-z-]{5,}/g) || []) if (!common.has(w)) counts[w] = (counts[w] || 0) + 1;
     const repeats = Object.keys(counts).filter(w => counts[w] > 1);
     if (repeats.length) problems.push(`Repeats ${repeats.map(w => `"${w}"`).join(", ")} — use each word only once.`);
+    // Comma splice: "…solves problems accurately, [Subject] could benefit…". A sentence
+    // that opens with a lead-in clause ("When…, ", "For the remainder…, ") is fine.
+    const splice = sentences.find(s => /,\s+\[Subject2?\]\s/.test(s) && !/^(?:when|if|although|though|while|as|because|since|before|after|once|for|to|by|with|despite|in|during|throughout)\b/i.test(s));
+    if (splice) problems.push(`Joins two ideas with a comma ("${splice.replace(/\[(\w+)\]/g, "[@$1]").slice(0, 90)}…") — split it into two sentences.`);
+    if ((m = find(/\bthe (?:[A-Z][\w-]* )*(?:Test|Quiz|Exam|Assignment|Project|Lab|Task|Assessment) \d+\b/)))
+      problems.push(`Writes "the ${m.replace(/^the /, "")}" — drop "the" before a numbered assessment name ("on Cycle Test 1").`);
     if (sentences.length > 4) problems.push(`Too long (${sentences.length} sentences) — use 3–4 sentences.`);
     return problems;
   };
@@ -424,10 +430,11 @@ Revise it so it reads naturally and professionally to a parent.
 ${problems.length ? `Fix these problems:\n${problems.map(p => `- ${p}`).join('\n')}` : 'No rule problems were found — only improve wording that sounds awkward or unnatural.'}
 
 Also make sure:
-- One clear idea per sentence, plain everyday wording, no filler, no word used twice.
+- One clear idea per sentence — never join two ideas with a comma. Plain everyday wording, no filler, no word used twice.${isMidterm && !thriving && !form.failing ? `
+- The structure is: strength, (optional) what the assessment work shows, area for growth in its own sentence, then a next step that follows directly from that area for growth. You may split a sentence to achieve this (up to 4 sentences).` : ''}
 - ${isMidterm ? 'Present tense throughout ("demonstrates", "is developing", "is encouraged to").' : 'Past tense, except a closing sentence that looks ahead to future courses.'}
 - Never mention the teacher or the credit.
-- Keep the same meaning, facts and number of sentences. Do not invent anything new.
+- Keep the same meaning and facts, in 3–4 sentences. Do not invent anything new.
 - Keep every code exactly as written (${levelRequired ? '[@Level], ' : ''}[@Name], [@Subject2], [@Subject], [@Possessive2], [@Possessive], [@Object])${levelRequired ? '' : ' and do NOT add [@Level]'}, in the same Excel format: =[@Name]&" text "&[@Subject2]&" more text."
 
 Output ONLY the revised formula.`;
@@ -682,7 +689,7 @@ ${midtermStructureRules()}`
 3b. Describe assessments by what the work SHOWS: "[@Possessive2] work on the [assessment] shows that [@Subject] can…". NEVER "applies concepts from the [test]".`
       : `3. SENTENCE 1 must describe the student's OVERALL performance in the course — NEVER name a specific unit or topic in sentence 1. WRONG: "demonstrated [@Level] understanding of quadratic relations". RIGHT: "demonstrated [@Level] understanding of the Grade 10 Mathematics course."`;
     const sentencesRule = isMidterm
-      ? `4. Write EXACTLY 3 sentences total. Sentence 1: area of strength. Sentence 2: ${thriving ? 'another specific strength (no area for growth)' : 'area for growth'}. Sentence 3: ${closing}. STOP after sentence 3.`
+      ? `4. Write 3 or 4 sentences, ONE idea per sentence — never join two ideas with a comma. Sentence 1: area of strength. Optional next sentence: what the work on the best assessment shows. Then: ${thriving ? 'another specific strength (no area for growth)' : 'the area for growth, in its own sentence'}. Last: ${closing}${thriving ? '' : ', following directly from the area for growth'}. STOP there.`
       : `4. Write EXACTLY 3 sentences total — no more, no less. Sentence 1: overall course performance with [@Level]. Sentence 2: a specific academic observation. Sentence 3: ${closing}. STOP after sentence 3. Do NOT write a 4th sentence.`;
     const bannedRule = isMidterm
       ? `6. BANNED words and phrases in the comment body: "arrived on time", "worked hard", "well-reasoned", "strong ability", "sophisticated", "exceptional", "outstanding", "impressive" (unless level is an excellent or a strong), "classes" (use "courses" instead).${usesLevel ? ' Never put "strong", "excellent", "good" or "solid" in the same sentence as [@Level].' : ''} Never use the same verb twice in the comment. Learning-skills strengths like "a willingness to learn" or "arrives prepared for class" ARE allowed in the opening when they match the Strengths given.`
