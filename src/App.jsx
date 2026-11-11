@@ -233,6 +233,17 @@ export default function App() {
   const [useGemini, setUseGemini] = useState(true);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [excelMode, setExcelMode] = useState(true);
+  // "midterm" → next steps for the rest of THIS course; "final" → next steps for future courses
+  const [term, setTermState] = useState(() => {
+    try { return localStorage.getItem("rc_term") === "midterm" ? "midterm" : "final"; } catch { return "final"; }
+  });
+  const setTerm = (t) => {
+    setTermState(t);
+    try { localStorage.setItem("rc_term", t); } catch { /* storage unavailable */ }
+  };
+  const isMidterm = term === "midterm";
+  const reportName = isMidterm ? "midterm progress report" : "final report card";
+  const systemPrompt = `You are an experienced Ontario high school teacher. You write professional, grammatically correct, specific, and natural-sounding ${reportName} comments. You follow formatting instructions precisely and output only what is asked — no commentary, no preamble.`;
 
   useEffect(() => {
     const storedKey = localStorage.getItem("rc_gemini_key");
@@ -297,7 +308,16 @@ export default function App() {
 
   const buildPassPrompt = () => {
     const topics = form.subject && form.grade ? getTopics(form.subject, form.grade, form.stream) : null;
-    return `Write a Grade ${form.grade || 'high school'} ${form.subject || 'course'} Ontario final report card comment as an Excel formula.
+    const example = isMidterm
+      ? `=[@Name]&" has demonstrated "&[@Level]&" understanding of the Grade 11 Biology course so far. "&[@Subject2]&" has supported "&[@Possessive]&" conclusions with clear evidence, particularly in the unit on genetics. The recent lab report reflected careful attention to experimental design. For the remainder of the course, "&[@Subject]&" is encouraged to review feedback on each assessment before the final evaluation."`
+      : `=[@Name]&" demonstrated "&[@Level]&" understanding of the Grade 11 Biology course. "&[@Subject2]&" supported "&[@Possessive]&" conclusions with strong evidence, particularly in the unit on genetics. The culminating lab report reflected careful attention to experimental design. "&[@Subject2]&" is encouraged to develop these skills in future science courses."`;
+    const tenseRule = isMidterm
+      ? `4. This is a MIDTERM comment: describe progress so far this semester (e.g. "has demonstrated", "has shown"); only the final sentence looks ahead, to the rest of THIS course`
+      : `4. Past tense throughout; only the final sentence looks forward to future courses`;
+    const closingRule = isMidterm
+      ? `7. The final sentence MUST give a specific next step for the REMAINDER OF THIS COURSE (e.g. "for the remainder of the course", "in the upcoming units", "before the final evaluation"), followed by a period. NEVER mention future courses, next year, or subsequent courses — the student is still in this course. Keep it concise — no filler like "to achieve academic success".`
+      : `7. The final sentence MUST end with a specific future course reference (e.g. "in future Physics courses", "in future science courses", "in subsequent courses") followed by a period. Never stop before naming the future courses. Keep it concise — do not pad it with filler phrases like "to achieve academic success" or "in upcoming studies".`;
+    return `Write a Grade ${form.grade || 'high school'} ${form.subject || 'course'} Ontario ${reportName} comment as an Excel formula.
 
 CODES (copy exactly, do not alter):
 =[@Name] — student name, once at the very start
@@ -309,17 +329,17 @@ CODES (copy exactly, do not alter):
 Formula format: =[@Name]&" text "&[@Subject2]&" more "&[@Possessive]&" noun."
 
 EXAMPLE:
-=[@Name]&" demonstrated "&[@Level]&" understanding of the Grade 11 Biology course. "&[@Subject2]&" supported "&[@Possessive]&" conclusions with strong evidence, particularly in the unit on genetics. The culminating lab report reflected careful attention to experimental design. "&[@Subject2]&" is encouraged to develop these skills in future science courses."
+${example}
 
 CRITICAL RULES:
 1. [@Level] MUST appear — never write the achievement level as plain text. Write ONLY "&[@Level]&" with no extra words before or after it (e.g. WRONG: "a good "&[@Level]&"" — CORRECT: "&[@Level]&"")
 2. 3–4 complete sentences, each ending in a period — no comma splices
 3. Not every sentence starts with the pronoun — vary openers (e.g. "The [assessment]...", "Complex problems were...")
-4. Past tense throughout; only the final sentence looks forward to future courses
+${tenseRule}
 5. No filler phrases: "worked hard", "positive attitude", "showed dedication", "on time for class", "punctual", "attendance", "contributing to a focused learning environment", "pleasant to work with", "willingness to engage", "to further consolidate learning"
 5b. Do NOT use achievement-level adjectives anywhere in the comment body — words like "excellent", "exceptional", "outstanding", "strong", "good", "solid", "impressive" echo the [@Level] placeholder and sound redundant. Describe what the student did specifically instead.
 6. No word or phrase from the end of one sentence should reappear at the start of the next — avoid all back-to-back repetition between sentences
-7. The final sentence MUST end with a specific future course reference (e.g. "in future Physics courses", "in future science courses", "in subsequent courses") followed by a period. Never stop before naming the future courses. Keep it concise — do not pad it with filler phrases like "to achieve academic success" or "in upcoming studies".
+${closingRule}
 8. Never make absolute predictions ("will excel", "will succeed", "will thrive") — use "is encouraged to continue" or "is well-prepared to"
 9. Only use "continue" in the final sentence when the closing advice relates to a STRENGTH. If it relates to an area for improvement, write "is encouraged to [do X]" without "continue" — "continue" implies the student was already doing it
 
@@ -340,7 +360,19 @@ ${form.notes && !isNA(form.notes) ? `Context (tone only, do not state directly):
 Output only the Excel formula, nothing else.`;
   };
 
-  const buildFailPrompt = () => `Write a Grade ${form.grade || 'high school'} ${form.subject || 'course'} Ontario final report card comment for a FAILING student as an Excel formula.
+  // Failing comments differ most between terms: a final comment closes the
+  // door (no encouragement), a midterm comment says what must happen to still earn the credit.
+  const failExample = () => isMidterm
+    ? `=[@Name]&" is not currently meeting the expectations required to earn a credit in Grade 9 Science. Several key assignments and evaluations have not yet been completed to a passing standard, so "&[@Possessive]&" current work does not provide sufficient evidence of learning. To earn the credit by the end of the course, "&[@Subject]&" is encouraged to submit all outstanding assignments and attend extra help sessions before the final evaluation."`
+    : `=[@Name]&" did not meet the required expectations to pass Grade 9 Science. "&[@Possessive2]&" performance on assessments did not demonstrate sufficient understanding of the course expectations, as several key assignments and evaluations were not completed to a passing standard. Despite support being made available, "&[@Subject]&" was unable to provide the evidence of learning required to earn a credit."`;
+  const failStructure = () => isMidterm
+    ? `(1) state they are not currently meeting expectations / at risk of not earning the credit, (2) what is currently lacking using the reasons below, (3) a specific next step for the REMAINDER OF THIS COURSE to earn the credit`
+    : `(1) state they did not pass, (2) explain what specifically was lacking using the reasons provided, (3) reference support or a concluding factual statement`;
+  const failToneRule = () => isMidterm
+    ? `- Describe the situation so far this semester (e.g. "has not yet provided", "is not currently meeting"). Sentence 3 must be a concrete next step for the rest of THIS course — NEVER mention future courses or next year`
+    : `- All past tense, no forward-looking language or encouragement`;
+
+  const buildFailPrompt = () => `Write a Grade ${form.grade || 'high school'} ${form.subject || 'course'} Ontario ${reportName} comment for a ${isMidterm ? 'student who is currently FAILING' : 'FAILING student'} as an Excel formula.
 
 CODES (copy exactly):
 =[@Name] — student name, once at start
@@ -349,15 +381,15 @@ CODES (copy exactly):
 [@Object] — her/him/them — after prepositions or as verb object
 
 EXAMPLE:
-=[@Name]&" did not meet the required expectations to pass Grade 9 Science. "&[@Possessive2]&" performance on assessments did not demonstrate sufficient understanding of the course expectations, as several key assignments and evaluations were not completed to a passing standard. Despite support being made available, "&[@Subject]&" was unable to provide the evidence of learning required to earn a credit."
+${failExample()}
 
 RULES:
-- 3 complete sentences — do not repeat the same idea across all three. Each sentence should add new information: (1) state they did not pass, (2) explain what specifically was lacking using the reasons provided, (3) reference support or a concluding factual statement
+- 3 complete sentences — do not repeat the same idea across all three. Each sentence should add new information: ${failStructure()}
 - Vary sentence openers — not every sentence starts with the pronoun
 - Use the reasons for failing to write sentence 2 specifically — do not be generic
 - If reasons involve absences/missing work, do NOT mention attendance — write "did not provide sufficient evidence of learning" instead
 - Responsibility on student's actions: use "did not provide sufficient evidence", "was unable to demonstrate" — NEVER "had insufficient opportunity" or "was not given the chance"
-- All past tense, no forward-looking language or encouragement
+${failToneRule()}
 
 Reasons for failing: ${form.failReasons || 'not specified'}
 Support available: ${isNA(form.failSupport) || !form.failSupport ? 'not specified' : form.failSupport}
@@ -376,7 +408,16 @@ Output only the Excel formula, nothing else.`;
       "some": "balanced and honest. Recognize effort but clearly note significant areas needing development. Do NOT use words like well-reasoned, exceptional, careful, outstanding, impressive, or any language implying strong achievement.",
       "limited": "supportive but honest. Focus on foundational development. NEVER use impressive, excelled, outstanding, well-reasoned, or any praise language.",
     };
-    return `You are an Ontario high school teacher writing a final report card comment. Output ONLY an Excel formula — no plain text, no preamble.
+    const example = isMidterm
+      ? `=[@Name]&" has demonstrated "&[@Level]&" understanding of the Grade 11 Biology course so far. "&[@Subject2]&" has shown developing skill in the unit on genetics, though "&[@Subject]&" sometimes struggles to apply concepts independently. For the remainder of the course, "&[@Subject]&" is encouraged to seek clarification when needed before the final evaluation."`
+      : `=[@Name]&" demonstrated "&[@Level]&" understanding of the Grade 11 Biology course. "&[@Subject2]&" showed developing skill in the unit on genetics, though "&[@Subject]&" sometimes struggled to apply concepts independently. The culminating lab reflected foundational knowledge of experimental design. "&[@Subject2]&" is encouraged to seek clarification when needed in future science courses."`;
+    const closing = isMidterm
+      ? `ONE next-step sentence for the REMAINDER OF THIS COURSE (e.g. "for the remainder of the course", "in the upcoming units", "before the final evaluation")`
+      : `ONE forward-looking closing sentence referencing future courses`;
+    const finalRule = isMidterm
+      ? `8. This is a MIDTERM comment — the student is still in this course. Describe progress so far ("has demonstrated", "has shown"). The final sentence must be a next step for the rest of THIS course — NEVER mention future courses, next year, or subsequent courses. End with a period`
+      : `8. Final sentence must reference future ${form.subject || 'courses'} (not "classes") and end with a period`;
+    return `You are an Ontario high school teacher writing a ${reportName} comment. Output ONLY an Excel formula — no plain text, no preamble.
 
 ACHIEVEMENT LEVEL: ${form.level}
 TONE REQUIRED: ${toneExamples[form.level] || TONE_GUIDE[form.level] || ''}
@@ -393,18 +434,18 @@ CODES:
 [@Object] — ${pronouns.O} — after prepositions or as verb object only
 
 CORRECT EXAMPLE:
-=[@Name]&" demonstrated "&[@Level]&" understanding of the Grade 11 Biology course. "&[@Subject2]&" showed developing skill in the unit on genetics, though "&[@Subject]&" sometimes struggled to apply concepts independently. The culminating lab reflected foundational knowledge of experimental design. "&[@Subject2]&" is encouraged to seek clarification when needed in future science courses."
+${example}
 
 RULES:
 1. OUTPUT MUST START WITH = AND USE THE CODES ABOVE — never output plain text
-2. [@Level] MUST appear exactly once before a noun like "understanding" or "grasp". The verb immediately before it must be simple: "demonstrated", "showed", "developed", or "displayed". NEVER write compound phrases like "excelled in demonstrating" or "showed exceptional" before [@Level] — [@Level] already contains the achievement level, so adding praise words before it is redundant.
+2. [@Level] MUST appear exactly once before a noun like "understanding" or "grasp". The verb immediately before it must be simple: "demonstrated", "showed", "developed", or "displayed"${isMidterm ? ' (or "has demonstrated" / "has shown")' : ''}. NEVER write compound phrases like "excelled in demonstrating" or "showed exceptional" before [@Level] — [@Level] already contains the achievement level, so adding praise words before it is redundant.
 3. SENTENCE 1 must describe the student's OVERALL performance in the course — NEVER name a specific unit or topic in sentence 1. WRONG: "demonstrated [@Level] understanding of quadratic relations". RIGHT: "demonstrated [@Level] understanding of the Grade 10 Mathematics course."
-4. Write EXACTLY 3 sentences total — no more, no less. Sentence 1: overall course performance with [@Level]. Sentence 2: a specific academic observation. Sentence 3: ONE forward-looking closing sentence referencing future courses. STOP after sentence 3. Do NOT write a 4th sentence.
+4. Write EXACTLY 3 sentences total — no more, no less. Sentence 1: overall course performance with [@Level]. Sentence 2: a specific academic observation. Sentence 3: ${closing}. STOP after sentence 3. Do NOT write a 4th sentence.
 4b. Any sentence referencing assessments, tests, or culminating activities must describe what the student academically demonstrated or produced (skills, concepts, problem-solving). NEVER use an assessment sentence to describe behaviour, attitude, or support-seeking.
 5. BANNED sentence opener: "Complex problems were approached" — never use this
 6. BANNED words and phrases in the comment body: "arrived on time", "on time for class", "respect for the learning environment", "positive attitude", "willingness to engage", "worked hard", "well-reasoned", "strong ability", "exceptional", "outstanding", "impressive" (unless level is an excellent or a strong), "classes" (use "courses" instead)
 7. Curriculum topic: ${topics ? `choose ONE from: ${topics.join(' / ')}. Mention it ONCE in sentences 2 or 3 only, in a sentence about academic content. NEVER in sentence 1.` : 'omit curriculum topic references.'}
-8. Final sentence must reference future ${form.subject || 'courses'} (not "classes") and end with a period
+${finalRule}
 ${form.stream ? `9. Stream: ${form.stream} — do NOT write this word in the comment` : ''}
 
 Strengths: ${isNA(form.strengths) ? 'omit' : form.strengths}
@@ -415,7 +456,7 @@ ${form.notes && !isNA(form.notes) ? `Context (tone only, do not state): ${form.n
 OUTPUT THE EXCEL FORMULA NOW:`;
   };
 
-  const buildGroqFailPrompt = () => `Write a Grade ${form.grade || 'high school'} ${form.subject || 'course'} Ontario final report card comment for a FAILING student as an Excel formula.
+  const buildGroqFailPrompt = () => `Write a Grade ${form.grade || 'high school'} ${form.subject || 'course'} Ontario ${reportName} comment for a ${isMidterm ? 'student who is currently FAILING' : 'FAILING student'} as an Excel formula.
 
 CODES (copy exactly):
 =[@Name] — student name, once at start
@@ -424,14 +465,14 @@ CODES (copy exactly):
 [@Object] — ${PRONOUN_SETS[form.pronounIdx].O} — after prepositions or as verb object
 
 EXAMPLE:
-=[@Name]&" did not meet the required expectations to pass Grade 9 Science. "&[@Possessive2]&" performance on assessments did not demonstrate sufficient understanding of the course expectations, as several key assignments and evaluations were not completed to a passing standard. Despite support being made available, "&[@Subject]&" was unable to provide the evidence of learning required to earn a credit."
+${failExample()}
 
 RULES:
-- 3 complete sentences. Each adds new information: (1) did not pass, (2) what was lacking using the reasons below, (3) reference to support or a concluding factual statement
+- 3 complete sentences. Each adds new information: ${failStructure()}
 - Vary sentence openers — not every sentence starts with the pronoun
 - If reasons involve absences/missing work: do NOT say "attendance" — say "did not provide sufficient evidence of learning"
 - NEVER use "had insufficient opportunity" or "was not given the chance" — use "was unable to demonstrate" or "did not provide sufficient evidence"
-- All past tense, no encouragement, no forward-looking language
+${failToneRule()}
 
 Reasons for failing: ${form.failReasons || 'not specified'}
 Support available: ${isNA(form.failSupport) || !form.failSupport ? 'not specified' : form.failSupport}
@@ -717,7 +758,7 @@ Output only the Excel formula, nothing else.`;
       setLoading(false);
     };
     const body = JSON.stringify({
-      systemInstruction: { parts: [{ text: "You are an experienced Ontario high school teacher. You write professional, grammatically correct, specific, and natural-sounding final report card comments. You follow formatting instructions precisely and output only what is asked — no commentary, no preamble." }] },
+      systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: form.failing ? buildFailPrompt() : buildPassPrompt() }] }],
       generationConfig: { maxOutputTokens: 2048, temperature: 0.5 },
     });
@@ -765,7 +806,7 @@ Output only the Excel formula, nothing else.`;
             max_tokens: 2048,
             temperature: 0.4,
             messages: [
-              { role: "system", content: "You are an experienced Ontario high school teacher. You write professional, grammatically correct, specific, and natural-sounding final report card comments. You follow formatting instructions precisely and output only what is asked — no commentary, no preamble." },
+              { role: "system", content: systemPrompt },
               { role: "user", content: form.failing ? buildGroqFailPrompt() : buildGroqPassPrompt() },
             ],
           }),
@@ -796,6 +837,7 @@ Output only the Excel formula, nothing else.`;
       subject: form.subject,
       grade: form.grade,
       failing: form.failing,
+      term,
       comment: edited,
       date: new Date().toLocaleDateString("en-CA"),
     };
@@ -902,6 +944,29 @@ Output only the Excel formula, nothing else.`;
         {tab === "generate" && (
           <div style={{ background: "#fff", borderRadius: 16, padding: 24, boxShadow: "0 2px 12px rgba(0,0,0,0.08)" }}>
 
+            {/* Midterm / Final toggle */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Comment Type</label>
+              <div role="radiogroup" aria-label="Comment type" style={{ display: "inline-flex", background: "#eef2f6", borderRadius: 10, padding: 3, gap: 3 }}>
+                {[
+                  { value: "midterm", label: "📝 Midterm" },
+                  { value: "final", label: "🎓 Final" },
+                ].map(o => {
+                  const on = term === o.value;
+                  return (
+                    <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => setTerm(o.value)} style={{
+                      padding: "7px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, transition: "all 0.15s",
+                      background: on ? "#2d6a9f" : "transparent", color: on ? "#fff" : "#555",
+                      boxShadow: on ? "0 1px 3px rgba(0,0,0,0.15)" : "none",
+                    }}>{o.label}</button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>
+                {isMidterm ? "Next steps for the rest of this course." : "Next steps for future courses."}
+              </div>
+            </div>
+
             {/* Dropdowns — row 1: course info */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
               <div>
@@ -1002,7 +1067,7 @@ Output only the Excel formula, nothing else.`;
               background: loading ? "#aaa" : form.failing ? "linear-gradient(135deg, #922b21, #c0392b)" : "linear-gradient(135deg, #1e3a5f, #2d6a9f)",
               color: "white", fontWeight: 700, fontSize: 15
             }}>
-              {loading ? "✨ Generating…" : form.failing ? "⚠️ Generate Failing Comment" : "✨ Generate Comment"}
+              {loading ? "✨ Generating…" : `${form.failing ? "⚠️" : "✨"} Generate ${isMidterm ? "Midterm" : "Final"} ${form.failing ? "Failing " : ""}Comment`}
             </button>
 
             {/* Output */}
@@ -1075,7 +1140,9 @@ Output only the Excel formula, nothing else.`;
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 15, color: "#1e3a5f" }}>
-                      {s.name || "Student"} {s.failing && <span style={{ fontSize: 11, background: "#fdecea", color: "#c0392b", borderRadius: 4, padding: "2px 6px", fontWeight: 600 }}>FAILING</span>}
+                      {s.name || "Student"}{" "}
+                      {s.term && <span style={{ fontSize: 11, background: s.term === "midterm" ? "#fff4e0" : "#e8f0f8", color: s.term === "midterm" ? "#b9770e" : "#2d6a9f", borderRadius: 4, padding: "2px 6px", fontWeight: 600, marginRight: 4 }}>{s.term === "midterm" ? "MIDTERM" : "FINAL"}</span>}
+                      {s.failing && <span style={{ fontSize: 11, background: "#fdecea", color: "#c0392b", borderRadius: 4, padding: "2px 6px", fontWeight: 600 }}>FAILING</span>}
                     </div>
                     <div style={{ fontSize: 12, color: "#888" }}>{s.subject}{s.grade ? ` · Grade ${s.grade}` : ""} · {s.date}</div>
                   </div>
