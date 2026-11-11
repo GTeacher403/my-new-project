@@ -9,6 +9,18 @@ const LEVELS = [
   { label: "Limited", value: "limited" },
 ];
 
+// ── They/them grammar for plain-text view ──────────────────────────────
+// Optional adverb between "they"/"and" and the verb ("they consistently apply").
+const ADVERB = "(?:(?:\\w+ly|also|often|still|always|now|sometimes)\\s+)?";
+// Verbs that may follow "and" in a they-sentence. A fixed list, so plural
+// nouns ("concepts and skills") are never mistaken for verbs.
+const SINGULAR_VERBS = new Set(("is has does isn't doesn't hasn't was wasn't applies asks reaches seeks focuses goes shows " +
+  "demonstrates explains participates contributes completes submits works uses takes makes helps reviews " +
+  "collaborates communicates engages approaches needs continues strives produces solves understands connects " +
+  "builds supports listens follows organizes prepares arrives attends manages struggles requires benefits " +
+  "responds persists thinks writes reads practices gives tries comes keeps remains displays develops grows " +
+  "learns seems appears enjoys brings shares checks corrects asks considers creates designs interprets").split(" "));
+
 // ── Groq model selection ──────────────────────────────────────────────
 // Groq retires models periodically. We start with GROQ_DEFAULT_MODEL; if Groq
 // reports it as retired, we fetch the key's model list and pick a replacement.
@@ -272,6 +284,14 @@ export default function App() {
   const [useGemini, setUseGemini] = useState(true);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [excelMode, setExcelMode] = useState(true);
+  // Saved tab: show comments as Excel formulas or plain text (remembered).
+  const [savedPlain, setSavedPlainState] = useState(() => {
+    try { return localStorage.getItem("rc_saved_view") === "plain"; } catch { return false; }
+  });
+  const setSavedPlain = (v) => {
+    setSavedPlainState(v);
+    try { localStorage.setItem("rc_saved_view", v ? "plain" : "excel"); } catch { /* storage unavailable */ }
+  };
   // "midterm" → next steps for the rest of THIS course; "final" → next steps for future courses
   const [term, setTermState] = useState(() => {
     try { return localStorage.getItem("rc_term") === "midterm" ? "midterm" : "final"; } catch { return "final"; }
@@ -353,21 +373,47 @@ GOOD (same content): "[@Name] demonstrates [@Level] understanding of the Grade 1
   const isNA = v => v?.trim().toUpperCase() === "N/A";
   const pronouns = PRONOUN_SETS[form.pronounIdx];
 
-  const formulaToText = (formula) => {
-    const name = form.name?.trim() || "the student";
+  // Turns an Excel formula into readable text. Uses the Generate form's
+  // values unless a saved comment passes its own name / pronouns / level.
+  // Unknown pronouns or level (older saved comments) show as visible placeholders.
+  const formulaToText = (formula, opts = {}) => {
+    const name = ("name" in opts ? opts.name : form.name)?.trim() || "the student";
+    const pIdx = "pronounIdx" in opts ? opts.pronounIdx : form.pronounIdx;
+    const pr = PRONOUN_SETS[pIdx] || { p: "(she/he/they)", P: "(She/He/They)", o: "(her/him/them)", O: "(Her/Him/Them)", pos: "(her/his/their)", Pos: "(Her/His/Their)" };
+    const level = ("level" in opts ? opts.level : form.level) || "(level)";
+    // Function replacements, so a "$" in a name can't be read as a pattern.
     return formula
       .replace(/^=/, '')
-      .replace(/\[@Name\]/g, name)
-      .replace(/\[@Level\]/g, form.level)
-      .replace(/\[@Subject2\]/g, pronouns.P)
-      .replace(/\[@Subject\]/g, pronouns.p)
-      .replace(/\[@Object2\]/g, pronouns.O)
-      .replace(/\[@Object\]/g, pronouns.o)
-      .replace(/\[@Possessive2\]/g, pronouns.Pos)
-      .replace(/\[@Possessive\]/g, pronouns.pos)
+      .replace(/\[@Name\]/g, () => name)
+      .replace(/\[@Level\]/g, () => level)
+      .replace(/\[@Subject2\]/g, () => pr.P)
+      .replace(/\[@Subject\]/g, () => pr.p)
+      .replace(/\[@Object2\]/g, () => pr.O)
+      .replace(/\[@Object\]/g, () => pr.o)
+      .replace(/\[@Possessive2\]/g, () => pr.Pos)
+      .replace(/\[@Possessive\]/g, () => pr.pos)
       .replace(/&/g, '')
       .replace(/"/g, '')
+      // Within each sentence that has "they": fix the verb right after "they",
+      // and common verbs joined by "and" ("they ask questions and reaches out").
+      .replace(/\bthey\b[^.;:!?]*/gi, seg => seg
+        .replace(new RegExp(`\\b(they)(\\s+${ADVERB})([\\w']+)`, "gi"), (m, they, gap, verb) => `${they}${gap}${pluralVerb(verb)}`)
+        .replace(new RegExp(`\\b(and)(\\s+${ADVERB})([\\w']+)`, "gi"), (m, and, gap, verb) =>
+          SINGULAR_VERBS.has(verb.toLowerCase()) ? `${and}${gap}${pluralVerb(verb)}` : m))
       .trim();
+  };
+  // Comments are written for she/he ("explains", "is"); with they/them the verb
+  // must change ("they explain", "they are"). Only touches the word after "they".
+  const pluralVerb = (v) => {
+    const irregular = { is: "are", was: "were", has: "have", does: "do", focuses: "focus", "isn't": "aren't", "doesn't": "don't", "hasn't": "haven't", "wasn't": "weren't" };
+    const lower = v.toLowerCase();
+    if (irregular[lower]) return v[0] === v[0].toUpperCase() ? irregular[lower][0].toUpperCase() + irregular[lower].slice(1) : irregular[lower];
+    if (/(ss|us|is)$/i.test(v) || v.length <= 3) return v;          // "discuss", "focus", "ask"
+    if (/[^aeiou]ies$/i.test(v)) return v.slice(0, -3) + "y";        // applies -> apply
+    if (/(sh|ch|x|z|ss)es$/i.test(v)) return v.slice(0, -2);         // reaches -> reach
+    if (/(o)es$/i.test(v)) return v.slice(0, -2);                    // goes -> go
+    if (/s$/i.test(v)) return v.slice(0, -1);                        // explains -> explain
+    return v;                                                        // already plural / not a verb
   };
 
   const TONE_GUIDE = {
@@ -988,6 +1034,8 @@ Output only the Excel formula, nothing else.`;
       grade: form.grade,
       failing: form.failing,
       term,
+      pronounIdx: form.pronounIdx,
+      level: form.failing ? null : form.level,
       comment: edited,
       date: new Date().toLocaleDateString("en-CA"),
     };
@@ -1002,6 +1050,15 @@ Output only the Excel formula, nothing else.`;
     navigator.clipboard.writeText(text).then(() => {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
+    });
+  };
+
+  // Change a saved comment's name / pronouns / level and store it.
+  const updateSaved = (id, patch) => {
+    setSaved(prev => {
+      const updated = prev.map(s => (s.id === id ? { ...s, ...patch } : s));
+      persist(updated);
+      return updated;
     });
   };
 
@@ -1309,10 +1366,26 @@ Output only the Excel formula, nothing else.`;
                 No saved comments yet. Generate and save one!
               </div>
             )}
-            {saved.map(s => (
+            {storageLoaded && saved.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, fontSize: 12, marginBottom: 12 }}>
+                <span style={{ color: savedPlain ? "#2d6a9f" : "#aaa", fontWeight: savedPlain ? 600 : 400 }}>Plain text</span>
+                <div role="switch" aria-checked={!savedPlain} aria-label="Show saved comments as Excel formulas" tabIndex={0}
+                  onClick={() => setSavedPlain(!savedPlain)}
+                  onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); setSavedPlain(!savedPlain); } }}
+                  style={{ width: 40, height: 22, borderRadius: 11, background: !savedPlain ? "#2d6a9f" : "#ccc", cursor: "pointer", position: "relative", transition: "background 0.2s" }}>
+                  <div style={{ position: "absolute", top: 3, left: !savedPlain ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+                </div>
+                <span style={{ color: !savedPlain ? "#2d6a9f" : "#aaa", fontWeight: !savedPlain ? 600 : 400 }}>Excel</span>
+              </div>
+            )}
+            {saved.map(s => {
+              const usesLevelCode = s.comment.includes("[@Level]");
+              const shown = savedPlain ? formulaToText(s.comment, { name: s.name, pronounIdx: s.pronounIdx, level: s.level }) : s.comment;
+              const small = { ...inp, padding: "6px 8px", fontSize: 12 };
+              return (
               <div key={s.id} style={{ background: "#fff", borderRadius: 14, padding: 20, marginBottom: 14, boxShadow: "0 2px 8px rgba(0,0,0,0.07)", borderLeft: `4px solid ${s.failing ? "#c0392b" : "#2d6a9f"}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                  <div>
+                  <div style={{ textAlign: "left" }}>
                     <div style={{ fontWeight: 700, fontSize: 15, color: "#1e3a5f" }}>
                       {s.name || "Student"}{" "}
                       {s.term && <span style={{ fontSize: 11, background: s.term === "midterm" ? "#fff4e0" : "#e8f0f8", color: s.term === "midterm" ? "#b9770e" : "#2d6a9f", borderRadius: 4, padding: "2px 6px", fontWeight: 600, marginRight: 4 }}>{s.term === "midterm" ? "MIDTERM" : "FINAL"}</span>}
@@ -1321,7 +1394,7 @@ Output only the Excel formula, nothing else.`;
                     <div style={{ fontSize: 12, color: "#888" }}>{s.subject}{s.grade ? ` · Grade ${s.grade}` : ""} · {s.date}</div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => copyToClipboard(s.comment, s.id)} style={{
+                    <button onClick={() => copyToClipboard(shown, s.id)} title={savedPlain ? "Copy as plain text" : "Copy Excel formula"} style={{
                       padding: "5px 12px", borderRadius: 7, cursor: "pointer", fontWeight: 600, fontSize: 12, transition: "all 0.2s",
                       background: copiedId === s.id ? "#1e3a5f" : "#fff",
                       color: copiedId === s.id ? "#fff" : "#2d6a9f",
@@ -1333,11 +1406,38 @@ Output only the Excel formula, nothing else.`;
                     }}>🗑 Delete</button>
                   </div>
                 </div>
-                <div style={{ fontSize: 13, lineHeight: 1.7, color: "#333", background: "#f8f9fa", borderRadius: 8, padding: 12 }}>
-                  {s.comment}
+                {/* Edit the details used to fill in the formula */}
+                <div style={{ display: "grid", gridTemplateColumns: usesLevelCode ? "2fr 1.3fr 1.6fr" : "2fr 1.3fr", gap: 8, marginBottom: 10, textAlign: "left" }}>
+                  <div>
+                    <label style={{ ...lbl, fontSize: 10 }} htmlFor={`name-${s.id}`}>Name</label>
+                    <input id={`name-${s.id}`} style={small} value={s.name || ""} placeholder="Student name"
+                      onChange={e => updateSaved(s.id, { name: e.target.value })} />
+                  </div>
+                  <div>
+                    <label style={{ ...lbl, fontSize: 10 }} htmlFor={`pron-${s.id}`}>Pronouns</label>
+                    <select id={`pron-${s.id}`} style={small} value={s.pronounIdx ?? ""}
+                      onChange={e => updateSaved(s.id, { pronounIdx: Number(e.target.value) })}>
+                      {s.pronounIdx == null && <option value="" disabled>Choose…</option>}
+                      {PRONOUN_SETS.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
+                    </select>
+                  </div>
+                  {usesLevelCode && (
+                    <div>
+                      <label style={{ ...lbl, fontSize: 10 }} htmlFor={`lvl-${s.id}`}>Achievement Level</label>
+                      <select id={`lvl-${s.id}`} style={small} value={s.level ?? ""}
+                        onChange={e => updateSaved(s.id, { level: e.target.value })}>
+                        {!s.level && <option value="" disabled>Choose…</option>}
+                        {LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, lineHeight: 1.7, color: "#333", background: "#f8f9fa", borderRadius: 8, padding: 12, textAlign: "left" }}>
+                  {shown}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
