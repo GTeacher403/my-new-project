@@ -252,7 +252,7 @@ const STREAMS = [
 
 const emptyForm = {
   name: "", pronounIdx: 0, level: "a strong", subject: "Science", grade: "9", stream: "", highest: "",
-  strengths: "", improvements: "", notes: "", failing: false,
+  strengths: "", improvements: "", notes: "", failing: false, thriving: false,
   failReasons: "", failSupport: "",
 };
 
@@ -285,22 +285,26 @@ export default function App() {
   // three levels the opening can still carry [@Level]; for adequate / some /
   // limited, "[@Level] understanding" reads as a deficit, so it is left out.
   const usesLevel = !isMidterm || ["an excellent", "a strong", "a good"].includes(form.level);
+  // "Doing well" option: no area for growth, close by encouraging current habits.
+  const thriving = !form.failing && !!form.thriving;
+  const thrivingImprovements = `Areas to improve: NONE — this student is doing well. Do NOT include any weakness, area for growth, "could benefit from", "is encouraged to work on", or new next step (ignore any such sentence in the example). Instead, the closing sentence encourages the student to CONTINUE specific current habits drawn from the Strengths${isMidterm ? ' for the rest of THIS course' : ', ending with the future course reference'}.`;
   const midtermStructureRules = () => `
 MIDTERM STRUCTURE (school requirement) — the comment MUST follow this order:
   (a) AREA OF STRENGTH — the opening sentence is strength-focused, built from the Strengths given.${usesLevel ? ' Pair [@Level] understanding with a specific strength in this sentence.' : ' Do NOT open with the achievement level or with anything that sounds like a deficit.'}
-  (b) AREA FOR GROWTH — one sentence naming a specific area for growth, phrased subtly and constructively (e.g. "[@Subject2] could benefit from…", "[@Subject2] would benefit from…", "Continuing to work on … would help [@Object]…"). Do NOT announce it with the label "An area for growth is…" — the structure should be felt, not stated.
-  (c) NEXT STEPS — the final sentence gives a concrete next step for the rest of THIS course.
+${thriving ? `  (b) ANOTHER STRENGTH — this student is doing well, so instead of an area for growth, give one more specific academic strength or habit. Do NOT include any weakness or "could benefit from" sentence.
+  (c) KEEP IT UP — the final sentence encourages the student to CONTINUE specific current habits for the rest of THIS course (e.g. "For the remainder of the course, [@Subject] is encouraged to continue [specific habit]."). Do NOT suggest anything new to work on.` : `  (b) AREA FOR GROWTH — one sentence naming a specific area for growth, phrased subtly and constructively (e.g. "[@Subject2] could benefit from…", "[@Subject2] would benefit from…", "Continuing to work on … would help [@Object]…"). Do NOT announce it with the label "An area for growth is…" — the structure should be felt, not stated.
+  (c) NEXT STEPS — the final sentence gives a concrete next step for the rest of THIS course.`}
 WRONG opening (not strength-focused): "[@Name] is demonstrating a limited understanding of this course."
 Strength-focused opening examples (match the style; base the content on THIS student's strengths):
 ${STRENGTH_OPENERS.map(s => `  - ${s}`).join('\n')}
 
 WRITING QUALITY — the comment is read by parents, so it must sound natural and plain:
-  - One clear idea per sentence. No stacked qualifiers like "particularly evident in", "especially in", "which is reflected in".
-  - Area for growth: phrase it subtly, e.g. "[@Subject2] could benefit from participating more actively in class discussions." Vary the wording ("could benefit from", "would benefit from", "[-ing phrase] would help [@Object]…"). NEVER write the label "An area for growth is…" and NEVER "is for [@Object] to…".
+  - One clear idea per sentence. No stacked qualifiers like "particularly evident in", "especially in", "which is reflected in".${thriving ? '' : `
+  - Area for growth: phrase it subtly, e.g. "[@Subject2] could benefit from participating more actively in class discussions." Vary the wording ("could benefit from", "would benefit from", "[-ing phrase] would help [@Object]…"). NEVER write the label "An area for growth is…" and NEVER "is for [@Object] to…".`}
   - Completed assessments stay in the present tense by describing what the work SHOWS: "[@Possessive2] work on the Dynamics Unit Test shows that [@Subject] can apply complex principles accurately." NEVER "On the [test], [@Subject] applies…".
   - Never mention the same unit or topic twice. If the Best assessment already names a unit (e.g. "Dynamics Unit Test"), do NOT also add the curriculum topic for that unit.
   - No vague padding: "to deepen collective understanding", "to reach [@Possessive] full potential", "to achieve academic success".${usesLevel ? `
-  - Never put "strong", "excellent", "good" or "solid" anywhere near [@Level] — the placeholder already states the level.` : ''}${usesLevel ? `
+  - Never put "strong", "excellent", "good" or "solid" anywhere near [@Level] — the placeholder already states the level.` : ''}${usesLevel && !thriving ? `
 BAD (do not write like this): "[@Name] demonstrates [@Level] understanding of Grade 12 Physics concepts, particularly evident in [@Possessive] strong natural intuition for problem-solving. On the Dynamics Unit Test, [@Subject] applies complex principles effectively, especially in the unit on dynamics. An area for growth is for [@Object] to participate more actively in class discussions. For the remainder of the course, [@Subject] is encouraged to share [@Possessive] insights and questions more frequently to deepen collective understanding."
 GOOD (same content): "[@Name] demonstrates [@Level] understanding of the Grade 12 Physics course and approaches problem-solving with natural intuition. [@Possessive2] work on the Dynamics Unit Test shows that [@Subject] can apply complex principles accurately. [@Subject2] could benefit from participating more actively in class discussions. For the remainder of the course, [@Subject] is encouraged to share [@Possessive] questions and ideas during class discussions."` : ''}
 `;
@@ -378,7 +382,11 @@ GOOD (same content): "[@Name] demonstrates [@Level] understanding of the Grade 1
     const tenseRule = isMidterm
       ? `4. This is a MIDTERM comment and MUST be written in the PRESENT TENSE throughout (e.g. "demonstrates", "is developing", "applies", "is encouraged to"). NEVER use past tense ("demonstrated", "showed") or "has demonstrated"/"has shown".`
       : `4. Past tense throughout; only the final sentence looks forward to future courses`;
-    const closingRule = isMidterm
+    const closingRule = thriving
+      ? (isMidterm
+        ? `7. The final sentence MUST encourage the student to CONTINUE specific current habits for the REMAINDER OF THIS COURSE (e.g. "For the remainder of the course, [@Subject] is encouraged to continue [specific habit]."), followed by a period. Do NOT suggest anything new to work on. NEVER mention future courses.`
+        : `7. The final sentence MUST encourage the student to CONTINUE specific current habits and end with a future course reference (e.g. "[@Subject2] is encouraged to continue [specific habit] in future Physics courses."), followed by a period. Do NOT suggest anything new to work on.`)
+      : isMidterm
       ? `7. The final sentence MUST give a specific next step for the REMAINDER OF THIS COURSE (e.g. "for the remainder of the course", "in the upcoming units", "before the final evaluation"), followed by a period. NEVER mention future courses, next year, or subsequent courses — the student is still in this course. Keep it concise — no filler like "to achieve academic success".`
       : `7. The final sentence MUST end with a specific future course reference (e.g. "in future Physics courses", "in future science courses", "in subsequent courses") followed by a period. Never stop before naming the future courses. Keep it concise — do not pad it with filler phrases like "to achieve academic success" or "in upcoming studies".`;
     const levelCode = usesLevel
@@ -429,7 +437,7 @@ RULES for using the curriculum topic:
 - The topic clause must follow a statement about demonstrated CONTENT KNOWLEDGE or SKILL — e.g. "demonstrated understanding of quadratic relations" or "applied concepts from analytic geometry accurately". NEVER attach it to a behavioural or motivational observation like engagement, attitude, participation, willingness, or effort. WRONG: "approached concepts with enthusiasm, particularly in the unit on X" — RIGHT: "applied problem-solving strategies to quadratic relations".
 - Do NOT use "which supported" or "which helped" to link a behaviour to a curriculum topic. The topic must stand on its own as an academic observation.` : ''}
 Strengths: ${isNA(form.strengths) ? 'omit' : form.strengths}
-Areas to improve (frame as a forward-looking recommendation — something the student SHOULD do more of, not something they already do): ${isNA(form.improvements) ? 'omit' : form.improvements}
+${thriving ? thrivingImprovements : `Areas to improve (frame as a forward-looking recommendation — something the student SHOULD do more of, not something they already do): ${isNA(form.improvements) ? 'omit' : form.improvements}`}
 ${!isNA(form.highest) && form.highest ? `Best assessment: ${form.highest}` : 'Do not mention any specific assessment.'}
 ${form.notes && !isNA(form.notes) ? `Context (tone only, do not state directly): ${form.notes}` : ''}
 
@@ -492,7 +500,11 @@ Output only the Excel formula, nothing else.`;
       : usesLevel
         ? `=[@Name]&" demonstrates "&[@Level]&" understanding of the Grade 11 Biology course and applies feedback to improve "&[@Possessive]&" work. "&[@Subject2]&" could benefit from explaining each step of "&[@Possessive]&" reasoning in written responses on genetics. For the remainder of the course, "&[@Subject]&" is encouraged to review feedback on each assessment before the final evaluation."`
         : `=[@Name]&" approaches new learning with curiosity and is willing to ask questions to deepen "&[@Possessive]&" understanding. "&[@Subject2]&" would benefit from completing and submitting assignments more consistently. For the remainder of the course, "&[@Subject]&" is encouraged to attend extra help sessions and check in regularly about outstanding work."`;
-    const closing = isMidterm
+    const closing = thriving
+      ? (isMidterm
+        ? `ONE sentence encouraging the student to CONTINUE specific current habits for the REMAINDER OF THIS COURSE (nothing new to work on)`
+        : `ONE sentence encouraging the student to CONTINUE specific current habits in future courses (nothing new to work on)`)
+      : isMidterm
       ? `ONE next-step sentence for the REMAINDER OF THIS COURSE (e.g. "for the remainder of the course", "in the upcoming units", "before the final evaluation")`
       : `ONE forward-looking closing sentence referencing future courses`;
     const finalRule = isMidterm
@@ -509,7 +521,7 @@ ${midtermStructureRules()}`
       ? `3. SENTENCE 1 is the AREA OF STRENGTH${usesLevel ? ' and contains [@Level]' : ''} — NEVER name a specific unit or topic in sentence 1.`
       : `3. SENTENCE 1 must describe the student's OVERALL performance in the course — NEVER name a specific unit or topic in sentence 1. WRONG: "demonstrated [@Level] understanding of quadratic relations". RIGHT: "demonstrated [@Level] understanding of the Grade 10 Mathematics course."`;
     const sentencesRule = isMidterm
-      ? `4. Write EXACTLY 3 sentences total. Sentence 1: area of strength. Sentence 2: area for growth. Sentence 3: ${closing}. STOP after sentence 3.`
+      ? `4. Write EXACTLY 3 sentences total. Sentence 1: area of strength. Sentence 2: ${thriving ? 'another specific strength (no area for growth)' : 'area for growth'}. Sentence 3: ${closing}. STOP after sentence 3.`
       : `4. Write EXACTLY 3 sentences total — no more, no less. Sentence 1: overall course performance with [@Level]. Sentence 2: a specific academic observation. Sentence 3: ${closing}. STOP after sentence 3. Do NOT write a 4th sentence.`;
     const bannedRule = isMidterm
       ? `6. BANNED words and phrases in the comment body: "arrived on time", "worked hard", "well-reasoned", "strong ability", "exceptional", "outstanding", "impressive" (unless level is an excellent or a strong), "classes" (use "courses" instead). Learning-skills strengths like "a willingness to learn" or "arrives prepared for class" ARE allowed in the opening when they match the Strengths given.`
@@ -546,7 +558,7 @@ ${finalRule}
 ${form.stream ? `9. Stream: ${form.stream} — do NOT write this word in the comment` : ''}
 
 Strengths: ${isNA(form.strengths) ? 'omit' : form.strengths}
-Areas to improve (frame as encouragement): ${isNA(form.improvements) ? 'omit' : form.improvements}
+${thriving ? thrivingImprovements : `Areas to improve (frame as encouragement): ${isNA(form.improvements) ? 'omit' : form.improvements}`}
 ${!isNA(form.highest) && form.highest ? `Best assessment: ${form.highest}` : ''}
 ${form.notes && !isNA(form.notes) ? `Context (tone only, do not state): ${form.notes}` : ''}
 
@@ -827,7 +839,9 @@ Output only the Excel formula, nothing else.`;
     if (form.failing) {
       if (!form.failReasons) { setError("Please provide reasons for failing."); return; }
     } else {
-      if (!form.strengths || !form.improvements) { setError("Please fill in strengths and areas for improvement."); return; }
+      if (thriving) {
+        if (!form.strengths) { setError("Please fill in strengths — they shape the habits the comment encourages."); return; }
+      } else if (!form.strengths || !form.improvements) { setError("Please fill in strengths and areas for improvement."); return; }
     }
     // School guidance: every midterm comment opens with an area of strength.
     if (isMidterm && (!form.strengths?.trim() || isNA(form.strengths))) {
@@ -1141,6 +1155,22 @@ Output only the Excel formula, nothing else.`;
               <div style={{ fontWeight: 600, fontSize: 13, color: form.failing ? "#c0392b" : "#555" }}>Student is failing this course</div>
             </div>
 
+            {/* Doing-well toggle (passing students only) */}
+            {!form.failing && (
+              <div role="checkbox" aria-checked={!!form.thriving} tabIndex={0}
+                onClick={() => set("thriving", !form.thriving)}
+                onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); set("thriving", !form.thriving); } }}
+                style={{ marginTop: -8, marginBottom: 20, padding: "10px 14px", borderRadius: 10, border: `2px solid ${form.thriving ? "#1e8449" : "#e0e0e0"}`, background: form.thriving ? "#f1faf4" : "#fafafa", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+                <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${form.thriving ? "#1e8449" : "#aaa"}`, background: form.thriving ? "#1e8449" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  {form.thriving && <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>✓</span>}
+                </div>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: form.thriving ? "#1e8449" : "#555" }}>Student is doing well — no next steps needed</div>
+                  <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Skips the area for growth; encourages them to continue their current habits.</div>
+                </div>
+              </div>
+            )}
+
             {/* Divider */}
             <div style={{ borderTop: "1px solid #eee", marginBottom: 20 }} />
 
@@ -1154,10 +1184,12 @@ Output only the Excel formula, nothing else.`;
                 <label style={lbl}>Strengths</label>
                 <textarea style={{ ...inp, resize: "vertical" }} rows={3} placeholder="e.g. strong analytical thinking, active participation…" value={form.strengths} onChange={e => set("strengths", e.target.value)} />
               </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={lbl}>Areas for Improvement</label>
-                <textarea style={{ ...inp, resize: "vertical" }} rows={3} placeholder="e.g. submitting work on time, showing steps in problem solving…" value={form.improvements} onChange={e => set("improvements", e.target.value)} />
-              </div>
+              {!form.thriving && (
+                <div style={{ marginBottom: 16 }}>
+                  <label style={lbl}>Areas for Improvement</label>
+                  <textarea style={{ ...inp, resize: "vertical" }} rows={3} placeholder="e.g. submitting work on time, showing steps in problem solving…" value={form.improvements} onChange={e => set("improvements", e.target.value)} />
+                </div>
+              )}
               <div style={{ marginBottom: 16 }}>
                 <label style={lbl}>Highest Graded Assessment <span style={{ fontWeight: 400, textTransform: "none", color: "#999" }}>(optional)</span></label>
                 <input style={inp} placeholder="e.g. Chemistry Culminating, Unit 3 Test…" value={form.highest} onChange={e => set("highest", e.target.value)} />
